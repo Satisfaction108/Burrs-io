@@ -70,7 +70,7 @@ interface Notification {
 
 type GameState = 'menu' | 'connecting' | 'playing'
 
-const SERVER_URL = 'http://localhost:5174'
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'https://burrs-io.onrender.com'
 
 // Game constants (match server settings)
 const PLAYER_SIZE = 30 // Base size for spikes (reduced from 35 for smaller spawn size)
