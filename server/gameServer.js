@@ -121,9 +121,14 @@ const httpServer = createServer();
 // Create Socket.IO server with CORS enabled
 const io = new Server(httpServer, {
   cors: {
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
-    methods: ['GET', 'POST'],
-  },
+    origin: [
+      "https://burrs-io-client.onrender.com",
+      "http://localhost:5173",
+      "http://localhost:5174"
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
+  }
 });
 
 // Handle client connections
