@@ -1,0 +1,15 @@
+{
+  "name": "burrs-io-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Game server for burrs.io",
+  "main": "gameServer.js",
+  "scripts": {
+    "start": "node gameServer.js",
+    "dev": "node --watch gameServer.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.2"
+  }
+}
+
