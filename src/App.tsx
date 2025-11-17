@@ -54,12 +54,7 @@ interface PremiumOrb {
   originalSize?: number
 }
 
-interface FoodTier {
-  color: string
-  xp: number
-  weight: number
-  tier: number
-}
+
 
 interface Notification {
   id: string
@@ -103,19 +98,7 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)]
 }
 
-// Food tier configuration (rarity system) - Neon colors
-const FOOD_TIERS: FoodTier[] = [
-  { tier: 1, color: '#ff0055', xp: 5, weight: 40 },   // Most common - Neon Red
-  { tier: 2, color: '#00ffff', xp: 10, weight: 25 },  // Common - Neon Cyan
-  { tier: 3, color: '#00d4ff', xp: 15, weight: 15 },  // Uncommon - Neon Blue
-  { tier: 4, color: '#ffff00', xp: 20, weight: 8 },   // Rare - Neon Yellow
-  { tier: 5, color: '#b000ff', xp: 25, weight: 5 },   // Very Rare - Neon Purple
-  { tier: 6, color: '#ff00ff', xp: 30, weight: 3 },   // Epic - Neon Pink
-  { tier: 7, color: '#ff6600', xp: 35, weight: 2 },   // Legendary - Neon Orange
-  { tier: 8, color: '#ff4500', xp: 40, weight: 1 },   // Mythic - Neon Coral
-  { tier: 9, color: '#00ccff', xp: 45, weight: 0.7 }, // Ultra Rare - Neon Light Blue
-  { tier: 10, color: '#cc00ff', xp: 50, weight: 0.3 } // Ultimate - Neon Lavender
-]
+// Food tier configuration is defined on the server side
 
 // Food generation is now handled server-side
 
