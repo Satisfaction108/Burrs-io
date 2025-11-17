@@ -983,9 +983,18 @@ function App() {
   // Food and premium orbs are now initialized by the server in the 'init' event
   // No client-side initialization needed
 
-  // Handle keyboard input (WASD + Arrow keys)
+  // Handle keyboard input (WASD + Arrow keys) - only when playing
   useEffect(() => {
+    // Only attach keyboard listeners when actually playing
+    if (gameState !== 'playing') return
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept keys if user is typing in an input field
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return
+      }
+
       const key = e.key.toLowerCase()
       if (key === 'w' || key === 'arrowup') {
         keysRef.current.w = true
@@ -1006,6 +1015,12 @@ function App() {
     }
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      // Don't intercept keys if user is typing in an input field
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return
+      }
+
       const key = e.key.toLowerCase()
       if (key === 'w' || key === 'arrowup') {
         keysRef.current.w = false
@@ -1032,7 +1047,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [])
+  }, [gameState])
 
   // Socket.IO connection - connect once when leaving menu
   useEffect(() => {
