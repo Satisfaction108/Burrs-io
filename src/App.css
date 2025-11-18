@@ -215,3 +215,274 @@
     transform: rotate(360deg);
   }
 }
+/* Death Screen Styles */
+.death-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: linear-gradient(135deg, rgba(26, 26, 46, 0.95) 0%, rgba(22, 33, 62, 0.95) 100%);
+  backdrop-filter: blur(10px);
+  animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.death-content {
+  background: linear-gradient(135deg, rgba(30, 30, 50, 0.9) 0%, rgba(25, 35, 65, 0.9) 100%);
+  border: 2px solid rgba(255, 70, 70, 0.3);
+  border-radius: 20px;
+  padding: 50px 60px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 100px rgba(255, 70, 70, 0.2),
+    inset 0 0 50px rgba(255, 70, 70, 0.05);
+  animation: slideUp 0.5s ease-out;
+  max-width: 500px;
+  width: 90%;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(50px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.death-title {
+  font-size: 3.5rem;
+  font-weight: 900;
+  text-align: center;
+  margin: 0 0 40px 0;
+  background: linear-gradient(135deg, #ff4646 0%, #ff8080 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 30px rgba(255, 70, 70, 0.5);
+  letter-spacing: 2px;
+}
+
+.death-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 40px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.stat-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 70, 70, 0.3);
+  transform: translateX(5px);
+}
+
+.stat-label {
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 1.3rem;
+  color: #ffffff;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.stat-value.score-highlight {
+  background: linear-gradient(135deg, #ff4646 0%, #ff8080 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: 1.5rem;
+}
+
+.stat-value.premium-highlight {
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.death-buttons {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+}
+
+.respawn-button,
+.home-button {
+  padding: 15px 40px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+}
+
+.respawn-button {
+  background: linear-gradient(135deg, #ff4646 0%, #ff6b6b 100%);
+  color: white;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.respawn-button:hover {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8080 100%);
+  transform: translateY(-3px);
+  box-shadow:
+    0 8px 25px rgba(255, 70, 70, 0.4),
+    0 0 30px rgba(255, 70, 70, 0.3);
+}
+
+.respawn-button:active {
+  transform: translateY(-1px);
+}
+
+.home-button {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+  color: white;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.home-button:hover {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.1) 100%);
+  transform: translateY(-3px);
+  box-shadow:
+    0 8px 25px rgba(255, 255, 255, 0.2),
+    0 0 30px rgba(255, 255, 255, 0.1);
+}
+
+.home-button:active {
+  transform: translateY(-1px);
+}
+
+
+
+/* Speed boost button - modern neon HUD control */
+.speed-boost-button {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.7);
+  background: radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.24), rgba(10, 10, 25, 0.96));
+  color: #e6ffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow:
+    0 0 20px rgba(0, 255, 255, 0.5),
+    0 6px 18px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  pointer-events: auto;
+  overflow: hidden;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.speed-boost-button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 28px rgba(0, 255, 255, 0.8),
+    0 10px 24px rgba(0, 0, 0, 0.7);
+}
+
+.speed-boost-button:active {
+  transform: translateY(0);
+  box-shadow:
+    0 0 18px rgba(0, 255, 255, 0.6),
+    0 4px 16px rgba(0, 0, 0, 0.8);
+}
+
+.speed-boost-icon {
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 0 6px rgba(0, 255, 255, 0.9));
+}
+
+.speed-boost-label {
+  color: #f5feff;
+}
+
+.speed-boost-key {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* Cooldown fill overlay inside the button */
+.speed-boost-fill-bar {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.25), rgba(0, 255, 255, 0.6));
+  transform-origin: left center;
+  transform: scaleX(0);
+  opacity: 0.3;
+  pointer-events: none;
+  animation: speedBoostFill 15s linear forwards;
+}
+
+@keyframes speedBoostFill {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  80% {
+    opacity: 0.4;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .speed-boost-button {
+    left: 16px;
+    bottom: 16px;
+    padding: 8px 14px;
+  }
+
+  .speed-boost-label {
+    display: none;
+  }
+}
