@@ -78,6 +78,28 @@ interface ScorePopup {
   color: string
 }
 
+type DamageSeverity = 'normal' | 'heavy' | 'critical' | 'extreme' | 'kill'
+
+interface DamagePopup {
+  id: string
+  x: number
+  y: number
+  text: string
+  severity: DamageSeverity
+  startTime: number
+  duration: number
+}
+
+interface ChatMessage {
+  id: string
+  playerId: string
+  username: string
+  text: string
+  timestamp: number
+}
+
+
+
 interface CollisionParticle {
   x: number
   y: number
@@ -1144,7 +1166,7 @@ const drawCollisionEffects = (
 // Draw speed boost effects (cyan energy burst)
 const drawBoostEffects = (
   ctx: CanvasRenderingContext2D,
-  effects: Array<{ x: number; y: number; startTime: number; duration: number }>
+  effects: Array<{ x: number; y: number; startTime: number; duration: number; vx?: number; vy?: number }>
 ) => {
   const currentTime = Date.now()
 
@@ -1157,27 +1179,54 @@ const drawBoostEffects = (
 
       const worldX = effect.x
       const worldY = effect.y
-
-      const maxRadius = 90
-      const radius = (0.4 + progress * 0.6) * maxRadius
-      const innerRadius = radius * 0.5
+      const vx = effect.vx || 0
+      const vy = effect.vy || 0
+      const speed = Math.sqrt(vx * vx + vy * vy)
       const opacity = 1 - progress
 
-      // Soft cyan radial glow
-      const glowGradient = ctx.createRadialGradient(worldX, worldY, 0, worldX, worldY, radius)
-      glowGradient.addColorStop(0, `rgba(0, 255, 255, ${0.45 * opacity})`)
-      glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
-      ctx.fillStyle = glowGradient
-      ctx.beginPath()
-      ctx.arc(worldX, worldY, radius, 0, Math.PI * 2)
-      ctx.fill()
+      if (speed > 0.1) {
+        // Directional trail segment aligned with player movement
+        const angle = Math.atan2(vy, vx)
+        const baseLength = 40
+        const length = baseLength + speed * 4
+        const thickness = 10 * (1 - progress * 0.6)
 
-      // Inner sharp ring
-      ctx.beginPath()
-      ctx.arc(worldX, worldY, innerRadius, 0, Math.PI * 2)
-      ctx.strokeStyle = `rgba(0, 255, 255, ${0.8 * opacity})`
-      ctx.lineWidth = 3
-      ctx.stroke()
+        ctx.translate(worldX, worldY)
+        ctx.rotate(angle)
+
+        const grad = ctx.createLinearGradient(-length, 0, 0, 0)
+        grad.addColorStop(0, 'rgba(0, 255, 255, 0)')
+        grad.addColorStop(0.4, `rgba(0, 255, 255, ${0.85 * opacity})`)
+        grad.addColorStop(1, 'rgba(255, 0, 200, 0)')
+
+        ctx.strokeStyle = grad
+        ctx.lineWidth = thickness
+        ctx.lineCap = 'round'
+
+        ctx.beginPath()
+        ctx.moveTo(-length, 0)
+        ctx.lineTo(0, 0)
+        ctx.stroke()
+      } else {
+        // Soft cyan radial burst at boost start
+        const maxRadius = 90
+        const radius = (0.4 + progress * 0.6) * maxRadius
+        const innerRadius = radius * 0.5
+
+        const glowGradient = ctx.createRadialGradient(worldX, worldY, 0, worldX, worldY, radius)
+        glowGradient.addColorStop(0, `rgba(0, 255, 255, ${0.45 * opacity})`)
+        glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
+        ctx.fillStyle = glowGradient
+        ctx.beginPath()
+        ctx.arc(worldX, worldY, radius, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.beginPath()
+        ctx.arc(worldX, worldY, innerRadius, 0, Math.PI * 2)
+        ctx.strokeStyle = `rgba(0, 255, 255, ${0.8 * opacity})`
+        ctx.lineWidth = 3
+        ctx.stroke()
+      }
 
       ctx.restore()
     }
@@ -1250,6 +1299,80 @@ const drawScorePopups = (ctx: CanvasRenderingContext2D, popups: ScorePopup[]) =>
   }
 }
 
+// Draw damage popups (collision feedback for local player)
+const drawDamagePopups = (ctx: CanvasRenderingContext2D, popups: DamagePopup[]) => {
+  const currentTime = Date.now()
+
+  popups.forEach((popup) => {
+    const elapsed = currentTime - popup.startTime
+    const progress = Math.min(elapsed / popup.duration, 1)
+
+    if (progress < 1) {
+      ctx.save()
+
+      const easeProgress = 1 - Math.pow(1 - progress, 3)
+      const yOffset = -easeProgress * 35
+      const opacity = 1 - progress
+
+      ctx.globalAlpha = opacity
+      ctx.translate(popup.x, popup.y + yOffset)
+
+      let fontSize = 16
+      let color = '#ff6666'
+      let glow = '#ff3333'
+
+      switch (popup.severity) {
+        case 'heavy':
+          fontSize = 18
+          color = '#ff9f43'
+          glow = '#ff9f43'
+          break
+        case 'critical':
+          fontSize = 20
+          color = '#ff4b5c'
+          glow = '#ff4b5c'
+          break
+        case 'extreme':
+          fontSize = 22
+          color = '#ff00aa'
+          glow = '#ff00aa'
+
+          break
+        case 'kill':
+          fontSize = 24
+          color = '#ffd54f'
+          glow = '#ffd54f'
+          break
+      }
+
+      ctx.font = `800 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)'
+      ctx.lineWidth = 3
+      ctx.lineJoin = 'round'
+      ctx.strokeText(popup.text, 0, 0)
+
+      ctx.shadowColor = glow
+      ctx.shadowBlur = 10
+      ctx.fillStyle = color
+      ctx.fillText(popup.text, 0, 0)
+
+      ctx.restore()
+    }
+  })
+
+  // Remove finished popups
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const elapsed = currentTime - popups[i].startTime
+    if (elapsed >= popups[i].duration) {
+      popups.splice(i, 1)
+    }
+  }
+}
+
+
 // Draw collision particles
 const drawCollisionParticles = (ctx: CanvasRenderingContext2D, particles: CollisionParticle[]) => {
   particles.forEach((particle) => {
@@ -1286,7 +1409,13 @@ function App() {
   const [gameState, setGameState] = useState<GameState>('menu')
   const [deathStats, setDeathStats] = useState<DeathStats | null>(null)
   const [deathAnimationProgress, setDeathAnimationProgress] = useState(0)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [isChatOpen, setIsChatOpen] = useState(true)
   // Health and score are now managed server-side and received via player object
+  const chatLogRef = useRef<HTMLDivElement | null>(null)
+  const chatInputRef = useRef<HTMLInputElement | null>(null)
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const socketRef = useRef<Socket | null>(null)
   const playersRef = useRef<Map<string, Player>>(new Map())
@@ -1311,13 +1440,23 @@ function App() {
   const scorePopupsRef = useRef<ScorePopup[]>([])
   // Collision particles
   const collisionParticlesRef = useRef<CollisionParticle[]>([])
-  // Boost visual effects
+  // Boost visual effects (bursts + trails)
   const boostEffectsRef = useRef<Array<{
     x: number
     y: number
     startTime: number
     duration: number
+    vx?: number
+    vy?: number
   }>>([])
+  // Active boost trails (for motion streaks after a boost)
+  const boostTrailsRef = useRef<Array<{
+    playerId: string
+    startTime: number
+    duration: number
+  }>>([])
+  // Damage popups (collision feedback)
+  const damagePopupsRef = useRef<DamagePopup[]>([])
 
   // Speed boost cooldown UI state
   const [boostOnCooldown, setBoostOnCooldown] = useState(false)
@@ -1480,6 +1619,19 @@ function App() {
       }
 
       const key = e.key.toLowerCase()
+
+      // Press Enter to open/focus chat while playing
+      if (key === 'enter') {
+        setIsChatOpen(true)
+        setTimeout(() => {
+          if (chatInputRef.current) {
+            chatInputRef.current.focus()
+          }
+        }, 0)
+        e.preventDefault()
+        return
+      }
+
       if (key === 'w' || key === 'arrowup') {
         keysRef.current.w = true
         e.preventDefault()
@@ -1579,14 +1731,9 @@ function App() {
       if (canvas) {
         const localPlayer = data.players.find((p) => p.id === data.playerId)
         if (localPlayer) {
-          const maxCameraX = Math.max(0, data.mapConfig.width - canvas.width)
-          const maxCameraY = Math.max(0, data.mapConfig.height - canvas.height)
-          let targetCameraX = localPlayer.x - canvas.width / 2
-          let targetCameraY = localPlayer.y - canvas.height / 2
-          targetCameraX = Math.max(0, Math.min(maxCameraX, targetCameraX))
-          targetCameraY = Math.max(0, Math.min(maxCameraY, targetCameraY))
-          cameraRef.current.x = targetCameraX
-          cameraRef.current.y = targetCameraY
+          // Center camera directly on the player at spawn/respawn
+          cameraRef.current.x = localPlayer.x - canvas.width / 2
+          cameraRef.current.y = localPlayer.y - canvas.height / 2
         }
       }
 
@@ -1741,12 +1888,29 @@ function App() {
       const player = playersRef.current.get(data.playerId)
       const x = player ? player.x : data.x
       const y = player ? player.y : data.y
+      const now = Date.now()
 
+      // Initial burst at the boost start point
       boostEffectsRef.current.push({
         x,
         y,
-        startTime: Date.now(),
-        duration: 600,
+        startTime: now,
+        duration: 700,
+      })
+
+      // Short-lived trail that will spawn segments along the movement path
+      boostTrailsRef.current.push({
+        playerId: data.playerId,
+        startTime: now,
+        duration: 500,
+      })
+    })
+
+    // Receive chat messages from server
+    socket.on('chatMessage', (msg: ChatMessage) => {
+      setChatMessages(prev => {
+        const next = [...prev, msg]
+        return next.slice(-40)
       })
     })
 
@@ -1803,6 +1967,54 @@ function App() {
             maxLife: 50
           })
         }
+
+        // Damage feedback for local player (show loss for both players)
+        const localId = localPlayerIdRef.current
+        if (localId && (localId === data.player1Id || localId === data.player2Id)) {
+          const pushDamagePopup = (
+            targetPlayer: Player,
+            rawDamageHP: number,
+            hpAfter: number,
+            healthAfterPercent: number
+          ) => {
+            if (!targetPlayer || rawDamageHP <= 0) return
+
+            // Convert HP damage into approximate health% damage for more readable numbers
+            let damagePercent = rawDamageHP
+            if (hpAfter > 0 && healthAfterPercent > 0) {
+              damagePercent = Math.round((rawDamageHP * healthAfterPercent) / hpAfter)
+            }
+
+            if (damagePercent <= 0) damagePercent = 1
+
+            let severity: DamageSeverity = 'normal'
+            if (damagePercent >= 55) {
+              severity = 'extreme'
+            } else if (damagePercent >= 35) {
+              severity = 'critical'
+            } else if (damagePercent >= 20) {
+              severity = 'heavy'
+            }
+
+            const label = severity === 'normal'
+              ? `-${damagePercent}`
+              : `${severity.toUpperCase()} (-${damagePercent})`
+
+            damagePopupsRef.current.push({
+              id: `${Date.now()}-${Math.random()}`,
+              x: targetPlayer.x,
+              y: targetPlayer.y,
+              text: label,
+              severity,
+              startTime: Date.now(),
+              duration: severity === 'extreme' ? 1500 : 1200,
+            })
+          }
+
+          // Damage taken by player1 and player2 (from the perspective of this collision)
+          pushDamagePopup(player1, data.damage1, data.player1HP, data.player1Health)
+          pushDamagePopup(player2, data.damage2, data.player2HP, data.player2Health)
+        }
       }
     })
 
@@ -1820,6 +2032,24 @@ function App() {
       };
       killerScore: number;
     }) => {
+      const localId = localPlayerIdRef.current
+
+      // If local player is the killer, show a kill popup at the victim position
+      if (localId && data.killedBy === localId) {
+        const victim = playersRef.current.get(data.playerId)
+        if (victim) {
+          damagePopupsRef.current.push({
+            id: `${Date.now()}-${Math.random()}`,
+            x: victim.x,
+            y: victim.y,
+            text: 'KILLED',
+            severity: 'kill',
+            startTime: Date.now(),
+            duration: 1600,
+          })
+        }
+      }
+
       // Check if it's the local player who died
       if (data.playerId === localPlayerIdRef.current) {
         // Start death animation
@@ -1919,14 +2149,9 @@ function App() {
       let targetCameraY = 0
 
       if (localPlayer) {
+        // Always center camera on local player (no edge clamping)
         targetCameraX = localPlayer.x - canvas.width / 2
         targetCameraY = localPlayer.y - canvas.height / 2
-
-        // Clamp camera to map boundaries
-        const maxCameraX = Math.max(0, mapConfigRef.current.width - canvas.width)
-        const maxCameraY = Math.max(0, mapConfigRef.current.height - canvas.height)
-        targetCameraX = Math.max(0, Math.min(maxCameraX, targetCameraX))
-        targetCameraY = Math.max(0, Math.min(maxCameraY, targetCameraY))
       }
 
       // Smooth camera interpolation (lerp) to prevent sudden jumps
@@ -2019,6 +2244,28 @@ function App() {
       notificationsRef.current = notificationsRef.current.filter(notification => {
         return (now - notification.timestamp) < 3000 // Remove after 3 seconds
       })
+
+      // Update active boost trails (spawn streak segments along movement path)
+      boostTrailsRef.current = boostTrailsRef.current.filter((trail) => {
+        if (now - trail.startTime > trail.duration) {
+          return false
+        }
+
+        const trailPlayer = playersRef.current.get(trail.playerId)
+        if (!trailPlayer) {
+          return false
+        }
+
+        boostEffectsRef.current.push({
+          x: trailPlayer.x,
+          y: trailPlayer.y,
+          startTime: now,
+          duration: 450,
+        })
+
+        return true
+      })
+
 
       // Collision detection and food/orb management is now handled server-side
       // Client only receives updates via socket events
@@ -2128,6 +2375,7 @@ function App() {
         drawBoostEffects(ctx, boostEffectsRef.current)
         drawCollisionParticles(ctx, collisionParticlesRef.current)
         drawScorePopups(ctx, scorePopupsRef.current)
+        drawDamagePopups(ctx, damagePopupsRef.current)
       }
 
       ctx.restore()
@@ -2273,11 +2521,29 @@ function App() {
     triggerSpeedBoost()
   }
 
+  const sendChatMessage = () => {
+    const trimmed = chatInput.trim()
+    if (!trimmed || !socketRef.current) return
+
+    socketRef.current.emit('chatMessage', trimmed)
+    setChatInput('')
+
+    if (chatInputRef.current) {
+      chatInputRef.current.blur()
+    }
+  }
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
+
+  // Auto-scroll chat log to bottom on new messages
+  useEffect(() => {
+    if (!chatLogRef.current) return
+    chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight
+  }, [chatMessages, isChatOpen])
 
   return (
     <div className="app">
@@ -2286,7 +2552,7 @@ function App() {
 
       {gameState === 'playing' && (
         <button
-          className="speed-boost-button"
+          className={`speed-boost-button ${boostOnCooldown ? 'cooldown' : ''}`}
           onClick={handleSpeedBoostClick}
           aria-label="Speed boost (B)"
         >
@@ -2309,6 +2575,68 @@ function App() {
           <span className="speed-boost-key">B</span>
         </button>
       )}
+
+      {gameState === 'playing' && isChatOpen && (
+        <div className="chat-panel">
+          <div className="chat-header">
+            <span className="chat-title">Chat</span>
+            <button
+              type="button"
+              className="chat-collapse-button"
+              onClick={() => setIsChatOpen(false)}
+              aria-label="Hide chat"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="chat-log" ref={chatLogRef}>
+            {chatMessages.map((msg) => (
+              <div key={msg.id} className="chat-message">
+                <span className="chat-username">{msg.username}</span>
+                <span className="chat-text">{msg.text}</span>
+              </div>
+            ))}
+          </div>
+          <div className="chat-input-row">
+            <input
+              ref={chatInputRef}
+              className="chat-input"
+              type="text"
+              placeholder="Type a message..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  sendChatMessage()
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="chat-send-button"
+              onClick={(e) => {
+                e.preventDefault()
+                sendChatMessage()
+              }}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
+      {gameState === 'playing' && !isChatOpen && (
+        <button
+          type="button"
+          className="chat-toggle-button closed"
+          onClick={() => setIsChatOpen(true)}
+          aria-label="Show chat"
+        >
+          Chat
+        </button>
+      )}
+
 
 
       {gameState === 'menu' && (

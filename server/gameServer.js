@@ -379,6 +379,34 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle chat messages
+  socket.on('chatMessage', (rawMessage) => {
+    const player = players.get(socket.id);
+    if (!player) return;
+
+    if (typeof rawMessage !== 'string') {
+      rawMessage = String(rawMessage ?? '');
+    }
+
+    let text = rawMessage.trim();
+    if (!text) return;
+
+    // Limit length and strip newlines for safety
+    if (text.length > 200) {
+      text = text.slice(0, 200);
+    }
+    text = text.replace(/[\r\n]+/g, ' ');
+
+    io.emit('chatMessage', {
+      id: Math.random().toString(36).substring(2, 11),
+      playerId: socket.id,
+      username: player.username || 'Unknown',
+      text,
+      timestamp: Date.now(),
+    });
+  });
+
+
   // Handle respawn request
   socket.on('respawn', (username) => {
     // Validate and sanitize username

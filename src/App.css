@@ -397,37 +397,61 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 18px;
+  padding: 10px 20px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 255, 255, 0.7);
-  background: radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.24), rgba(10, 10, 25, 0.96));
+  border: 1px solid rgba(0, 255, 255, 0.85);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.3), rgba(10, 10, 40, 0.96)),
+    linear-gradient(120deg, rgba(0, 229, 255, 0.95), rgba(0, 255, 160, 0.9));
   color: #e6ffff;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   box-shadow:
-    0 0 20px rgba(0, 255, 255, 0.5),
-    0 6px 18px rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(10px);
+    0 0 20px rgba(0, 255, 255, 0.6),
+    0 10px 30px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(12px);
   text-transform: uppercase;
   letter-spacing: 1px;
   pointer-events: auto;
   overflow: hidden;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  background-size: 160% 160%;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-position 0.3s ease;
+  animation: boostGlow 3s ease-in-out infinite;
 }
 
 .speed-boost-button:hover {
   transform: translateY(-2px);
   box-shadow:
-    0 0 28px rgba(0, 255, 255, 0.8),
-    0 10px 24px rgba(0, 0, 0, 0.7);
+    0 0 28px rgba(0, 255, 255, 0.9),
+    0 12px 32px rgba(0, 0, 0, 0.95);
 }
 
 .speed-boost-button:active {
   transform: translateY(0);
   box-shadow:
-    0 0 18px rgba(0, 255, 255, 0.6),
-    0 4px 16px rgba(0, 0, 0, 0.8);
+    0 0 18px rgba(0, 255, 255, 0.7),
+    0 4px 18px rgba(0, 0, 0, 1);
+}
+
+.speed-boost-button.cooldown {
+  filter: grayscale(0.8) brightness(0.65);
+  border-color: rgba(80, 160, 160, 0.8);
+  box-shadow:
+    0 0 10px rgba(0, 0, 0, 0.9);
+  cursor: default;
+  animation: none;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(80, 160, 160, 0.3), rgba(5, 10, 20, 0.96));
+}
+
+.speed-boost-button.cooldown:hover {
+  transform: translateY(0);
+  box-shadow:
+    0 0 10px rgba(0, 0, 0, 0.9);
 }
 
 .speed-boost-icon {
@@ -451,6 +475,19 @@
 
 /* Cooldown fill overlay inside the button */
 .speed-boost-fill-bar {
+
+@keyframes boostGlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, rgba(0, 255, 255, 0.25), rgba(0, 255, 255, 0.6));
@@ -460,6 +497,161 @@
   pointer-events: none;
   animation: speedBoostFill 15s linear forwards;
 }
+
+/* In-game chat panel */
+.chat-panel {
+  position: absolute;
+  left: 24px;
+  bottom: 96px;
+  width: 280px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 255, 255, 0.7);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.22), rgba(10, 10, 40, 0.98)),
+    linear-gradient(135deg, rgba(88, 101, 242, 0.55), rgba(255, 64, 129, 0.55));
+  background-blend-mode: overlay;
+  box-shadow:
+    0 0 22px rgba(0, 255, 255, 0.5),
+    0 14px 34px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.8), rgba(88, 101, 242, 0.45));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #e6f7ff;
+}
+
+.chat-collapse-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.7);
+  background: radial-gradient(circle at 30% 0%, rgba(0, 255, 255, 0.7), rgba(20, 20, 40, 1));
+  color: #e6ffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  padding: 0;
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
+}
+
+.chat-log {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #e8f8ff;
+  overflow-y: auto;
+  background: radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.08), rgba(5, 10, 30, 0.98));
+  min-height: 120px;
+}
+
+.chat-message {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-username {
+  font-weight: 600;
+  color: #7cfffb;
+}
+
+.chat-text {
+  flex: 1;
+  color: rgba(253, 250, 255, 0.9);
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 8px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.92), rgba(255, 64, 129, 0.3));
+}
+
+.chat-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 11px;
+  color: #e6ffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.chat-input::placeholder {
+  color: rgba(180, 210, 230, 0.7);
+}
+
+.chat-send-button {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.9), rgba(255, 64, 129, 0.9));
+  color: #0a0a14;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow:
+    0 0 12px rgba(0, 255, 255, 0.7),
+    0 4px 12px rgba(0, 0, 0, 0.9);
+}
+
+.chat-toggle-button {
+  position: absolute;
+  left: 24px;
+  bottom: 96px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.6);
+  background: radial-gradient(circle at 0% 0%, rgba(0, 255, 255, 0.4), rgba(10, 10, 40, 0.96));
+  color: #e6ffff;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow:
+    0 0 16px rgba(0, 255, 255, 0.8),
+    0 8px 22px rgba(0, 0, 0, 0.9);
+}
+
+@media (max-width: 600px) {
+  .chat-panel {
+    left: 10px;
+    bottom: 84px;
+    width: 72%;
+    max-height: 180px;
+  }
+
+  .chat-toggle-button {
+    left: 10px;
+    bottom: 84px;
+  }
+}
+
 
 @keyframes speedBoostFill {
   0% {
