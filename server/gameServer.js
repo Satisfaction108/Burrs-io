@@ -38,6 +38,108 @@ const FOOD_TIERS = [
   { tier: 10, color: '#cc00ff', xp: 50, weight: 0.3 } // Ultimate - Neon Lavender
 ];
 
+// Base FOV radius for normal player spikes (used for AI vision tuning)
+const PLAYER_BASE_FOV_RADIUS = 600;
+
+// AI-controlled spike configuration
+const AI_CONFIG = {
+  TARGET_COUNT: 6,            // Aim to keep ~6 AI entities in the world
+  BASE_SCORE: 500,            // Treat AI like a 500-score spike for HP/damage
+  COLOR: '#00ff88',           // Unique neon green/teal body color for AI entities
+  FOV_RADIUS: PLAYER_BASE_FOV_RADIUS * 1.5, // 1.5x normal spike FOV
+  SPEED_FACTOR: 0.85,         // Slightly slower than players
+};
+
+// Team configuration for main team mode
+const TEAM_BASE_SIZE = 700;
+const TEAM_BASE_MARGIN = 400;
+
+const TEAMS = [
+  {
+    id: 'ORANGE',
+    name: 'Neon Orange',
+    color: '#ff4500',
+    base: {
+      x: TEAM_BASE_MARGIN,
+      y: TEAM_BASE_MARGIN,
+      width: TEAM_BASE_SIZE,
+      height: TEAM_BASE_SIZE,
+    },
+  },
+  {
+    id: 'BLUE',
+    name: 'Neon Blue',
+    color: '#00ffff',
+    base: {
+      x: GAME_CONFIG.MAP_WIDTH - TEAM_BASE_MARGIN - TEAM_BASE_SIZE,
+      y: TEAM_BASE_MARGIN,
+      width: TEAM_BASE_SIZE,
+      height: TEAM_BASE_SIZE,
+    },
+  },
+  {
+    id: 'RED',
+    name: 'Neon Red',
+    color: '#ff0055',
+    base: {
+      x: TEAM_BASE_MARGIN,
+      y: GAME_CONFIG.MAP_HEIGHT - TEAM_BASE_MARGIN - TEAM_BASE_SIZE,
+      width: TEAM_BASE_SIZE,
+      height: TEAM_BASE_SIZE,
+    },
+  },
+  {
+    id: 'YELLOW',
+    name: 'Neon Yellow',
+    color: '#ffff00',
+    base: {
+      x: GAME_CONFIG.MAP_WIDTH - TEAM_BASE_MARGIN - TEAM_BASE_SIZE,
+      y: GAME_CONFIG.MAP_HEIGHT - TEAM_BASE_MARGIN - TEAM_BASE_SIZE,
+      width: TEAM_BASE_SIZE,
+      height: TEAM_BASE_SIZE,
+    },
+  },
+];
+
+function getRandomTeam() {
+  return TEAMS[Math.floor(Math.random() * TEAMS.length)];
+}
+
+// Spawn inside a team's base with small padding so players don't spawn right on the edge
+function getRandomSpawnPositionForTeam(team) {
+  const padding = 40;
+  const base = team.base;
+  const x = base.x + padding + Math.random() * (base.width - padding * 2);
+  const y = base.y + padding + Math.random() * (base.height - padding * 2);
+  return { x, y };
+}
+function isPointInsideBase(base, x, y) {
+  return (
+    x >= base.x &&
+    x <= base.x + base.width &&
+    y >= base.y &&
+    y <= base.y + base.height
+  );
+}
+
+// Check if a circle (spike body + thorns) overlaps a team base rectangle
+function isCircleOverlappingBase(base, x, y, radius) {
+  const closestX = Math.max(base.x, Math.min(x, base.x + base.width));
+  const closestY = Math.max(base.y, Math.min(y, base.y + base.height));
+  const dx = x - closestX;
+  const dy = y - closestY;
+  return dx * dx + dy * dy <= radius * radius;
+}
+
+// Check if a player is currently inside any team base (used for AI target logic)
+function isPlayerInsideAnyBase(player) {
+  if (!player) return false;
+  const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : (player.score || 0);
+  const radius = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(effectiveScore) * 1.29;
+  return TEAMS.some((team) => isCircleOverlappingBase(team.base, player.x, player.y, radius));
+}
+
+
 // Calculate size multiplier based on score (3x slower progression)
 function getSizeMultiplier(score) {
   if (score < 3000) {
@@ -184,6 +286,72 @@ function generateRandomPremiumOrb() {
     xp: 100
   };
 }
+// Create an AI-controlled spike entity
+function createAIPlayer(index = 0) {
+  const spawnPos = getRandomSpawnPosition();
+  const baseScore = AI_CONFIG.BASE_SCORE;
+  const maxHP = getMaxHP(baseScore);
+
+  return {
+    id: `AI-${index}-${Math.random().toString(36).substring(2, 9)}`,
+    username: 'AI HUNTER',
+    x: spawnPos.x,
+    y: spawnPos.y,
+    vx: 0,
+    vy: 0,
+    size: GAME_CONFIG.PLAYER_SIZE,
+    color: AI_CONFIG.COLOR,
+    rotation: Math.random() * Math.PI * 2,
+    rotationSpeed: 0.02,
+    score: baseScore,
+    health: 100,
+    maxHP,
+    currentHP: maxHP,
+    isEating: false,
+    eatingProgress: 0,
+    isAngry: true,
+    angryProgress: 1,
+    isDying: false,
+    deathProgress: 0,
+    deathStartTime: 0,
+    lastCollisionTime: 0,
+    damageDealt: new Map(),
+    kills: 0,
+    foodEaten: 0,
+    premiumOrbsEaten: 0,
+    spawnTime: Date.now(),
+    lastBoostTime: 0,
+    currentSpeed: 0,
+    targetVx: 0,
+    targetVy: 0,
+    inputs: {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+    },
+    isAI: true,
+  };
+}
+
+// Ensure we always have a baseline number of AI entities in the world
+function ensureAIEntities() {
+  let currentCount = 0;
+  players.forEach((player) => {
+    if (player.isAI) {
+      currentCount += 1;
+    }
+  });
+
+  const targetCount = AI_CONFIG.TARGET_COUNT;
+  const toSpawn = Math.max(0, targetCount - currentCount);
+
+  for (let i = 0; i < toSpawn; i++) {
+    const aiPlayer = createAIPlayer(i);
+    players.set(aiPlayer.id, aiPlayer);
+  }
+}
+
 
 // Create HTTP server
 const httpServer = createServer();
@@ -218,8 +386,9 @@ io.on('connection', (socket) => {
     // Limit username length
     playerName = playerName.substring(0, 20);
 
-    // Create player object
-    const spawnPos = getRandomSpawnPosition();
+    // Assign player to a random team and spawn inside that team's base
+    const team = getRandomTeam();
+    const spawnPos = getRandomSpawnPositionForTeam(team);
     const player = {
       id: socket.id,
       username: playerName,
@@ -228,7 +397,7 @@ io.on('connection', (socket) => {
       vx: 0,
       vy: 0,
       size: GAME_CONFIG.PLAYER_SIZE,
-      color: generateRandomColor(),
+      color: team.color,
       rotation: Math.random() * Math.PI * 2,
       rotationSpeed: 0.015,
       score: 0, // Track player score
@@ -259,6 +428,8 @@ io.on('connection', (socket) => {
         left: false,
         right: false,
       },
+      isAI: false,
+      teamId: team.id,
     };
 
     players.set(socket.id, player);
@@ -289,6 +460,14 @@ io.on('connection', (socket) => {
       mapConfig: {
         width: GAME_CONFIG.MAP_WIDTH,
         height: GAME_CONFIG.MAP_HEIGHT,
+        teamBases: TEAMS.map(team => ({
+          id: team.id,
+          color: team.color,
+          x: team.base.x,
+          y: team.base.y,
+          width: team.base.width,
+          height: team.base.height,
+        })),
       },
     });
 
@@ -397,12 +576,17 @@ io.on('connection', (socket) => {
     }
     text = text.replace(/[\r\n]+/g, ' ');
 
+    const team = player.teamId ? TEAMS.find(t => t.id === player.teamId) : null;
+    const teamColor = team ? team.color : player.color;
+
     io.emit('chatMessage', {
       id: Math.random().toString(36).substring(2, 11),
       playerId: socket.id,
       username: player.username || 'Unknown',
       text,
       timestamp: Date.now(),
+      teamId: player.teamId || null,
+      teamColor,
     });
   });
 
@@ -418,8 +602,9 @@ io.on('connection', (socket) => {
 
     playerName = playerName.substring(0, 20);
 
-    // Create new player object (respawn)
-    const spawnPos = getRandomSpawnPosition();
+    // Create new player object (respawn) on a random team
+    const team = getRandomTeam();
+    const spawnPos = getRandomSpawnPositionForTeam(team);
     const player = {
       id: socket.id,
       username: playerName,
@@ -428,7 +613,7 @@ io.on('connection', (socket) => {
       vx: 0,
       vy: 0,
       size: GAME_CONFIG.PLAYER_SIZE,
-      color: generateRandomColor(),
+      color: team.color,
       rotation: Math.random() * Math.PI * 2,
       rotationSpeed: 0.015,
       score: 0,
@@ -459,6 +644,8 @@ io.on('connection', (socket) => {
         left: false,
         right: false,
       },
+      isAI: false,
+      teamId: team.id,
     };
 
     players.set(socket.id, player);
@@ -473,6 +660,14 @@ io.on('connection', (socket) => {
       mapConfig: {
         width: GAME_CONFIG.MAP_WIDTH,
         height: GAME_CONFIG.MAP_HEIGHT,
+        teamBases: TEAMS.map(team => ({
+          id: team.id,
+          color: team.color,
+          x: team.base.x,
+          y: team.base.y,
+          width: team.base.width,
+          height: team.base.height,
+        })),
       },
     });
 
@@ -497,7 +692,13 @@ io.on('connection', (socket) => {
 
 // Game loop - update game state and broadcast to all clients
 function gameLoop() {
-  // Update all players based on their inputs
+  // Ensure AI entities are present
+  ensureAIEntities();
+
+  // Track how many AI hunters are targeting each player so we can spread aggro
+  const targetCounts = new Map();
+
+  // Update all players based on their inputs / AI behaviour
   players.forEach((player) => {
 
     // Update death animation FIRST - skip all other updates if dying
@@ -516,31 +717,87 @@ function gameLoop() {
     }
 
     // Calculate size multiplier for speed scaling
-    const sizeMultiplier = getSizeMultiplier(player.score);
+    const effectiveScoreForSize = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+    const sizeMultiplier = getSizeMultiplier(effectiveScoreForSize);
     // Bigger players are slower (inverse relationship)
     // At 1x size: 100% speed, at 2x size: ~71% speed, at 3x size: ~58% speed
-    const speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
+    let speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
+    // AI hunters are slightly slower than players
+    if (player.isAI) {
+      speedMultiplier *= AI_CONFIG.SPEED_FACTOR || 0.85;
+    }
     const adjustedSpeed = GAME_CONFIG.PLAYER_SPEED * speedMultiplier;
 
-    // Calculate target velocity based on inputs
+    // Calculate target velocity based on inputs (players) or AI behaviour
     let targetVx = 0;
     let targetVy = 0;
 
-    if (player.inputs.up) targetVy -= 1;
-    if (player.inputs.down) targetVy += 1;
-    if (player.inputs.left) targetVx -= 1;
-    if (player.inputs.right) targetVx += 1;
+    if (player.isAI) {
+      // Smarter chase: move toward nearby non-AI players, but spread aggro and
+      // never chase players who are safely inside any team base.
+      let targetPlayer = null;
+      let closestDist = Infinity;
+      let bestScore = Infinity;
 
-    // Normalize diagonal movement
-    if (targetVx !== 0 && targetVy !== 0) {
-      const magnitude = Math.sqrt(targetVx * targetVx + targetVy * targetVy);
-      targetVx = targetVx / magnitude;
-      targetVy = targetVy / magnitude;
+      players.forEach((other) => {
+        if (!other || other.id === player.id) return;
+        if (other.isAI) return; // AI do not target each other
+        if (other.isDying) return;
+        if (isPlayerInsideAnyBase(other)) return; // Don't chase players inside bases
+
+        const dx = other.x - player.x;
+        const dy = other.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > AI_CONFIG.FOV_RADIUS) return;
+
+        // Spread AI targets across players: prefer players with fewer AI already chasing them.
+        const currentTargets = targetCounts.get(other.id) || 0;
+        const spreadWeight = 300; // Tuned so multiple AI don't all hard-focus one player
+        const score = dist + currentTargets * spreadWeight;
+
+        if (score < bestScore) {
+          bestScore = score;
+          closestDist = dist;
+          targetPlayer = other;
+        }
+      });
+
+      if (targetPlayer && closestDist > 0) {
+        const dx = targetPlayer.x - player.x;
+        const dy = targetPlayer.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const dirX = dx / dist;
+        const dirY = dy / dist;
+
+        targetVx = dirX * adjustedSpeed;
+        targetVy = dirY * adjustedSpeed;
+
+        // Record that this target now has one more AI focusing it
+        const count = targetCounts.get(targetPlayer.id) || 0;
+        targetCounts.set(targetPlayer.id, count + 1);
+      } else {
+        // No target in view – gradually slow down via deceleration below
+        targetVx = 0;
+        targetVy = 0;
+      }
+    } else {
+      // Human player controlled via inputs
+      if (player.inputs.up) targetVy -= 1;
+      if (player.inputs.down) targetVy += 1;
+      if (player.inputs.left) targetVx -= 1;
+      if (player.inputs.right) targetVx += 1;
+
+      // Normalize diagonal movement
+      if (targetVx !== 0 && targetVy !== 0) {
+        const magnitude = Math.sqrt(targetVx * targetVx + targetVy * targetVy);
+        targetVx = targetVx / magnitude;
+        targetVy = targetVy / magnitude;
+      }
+
+      // Scale to adjusted speed
+      targetVx *= adjustedSpeed;
+      targetVy *= adjustedSpeed;
     }
-
-    // Scale to adjusted speed
-    targetVx *= adjustedSpeed;
-    targetVy *= adjustedSpeed;
 
     // Detect direction change (recoil effect)
     const prevTargetVx = player.targetVx || 0;
@@ -632,68 +889,145 @@ function gameLoop() {
     player.x = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_WIDTH - totalSize, player.x));
     player.y = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_HEIGHT - totalSize, player.y));
 
-    // Check collision with food
-    food.forEach((foodOrb) => {
-      const dx = foodOrb.x - player.x;
-      const dy = foodOrb.y - player.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+    // Enforce team base boundaries
+    // Human players can move freely inside their own base, but touching any other
+    // team's base is instantly lethal. AI hunters die on contact with any base
+    // so they never camp near spawn areas.
+    TEAMS.forEach((team) => {
+      const base = team.base;
+      const circleOverlaps = isCircleOverlappingBase(base, player.x, player.y, totalSize);
 
-      if (distance < actualSize + foodOrb.size) {
-        // Player collected food
-        player.score += foodOrb.xp;
-        player.foodEaten += 1; // Track food eaten
+      if (!circleOverlaps) return;
 
-        // Trigger eating animation
-        player.isEating = true;
-        player.eatingProgress = 0;
+      const isPlayerOnThisTeam = !player.isAI && player.teamId === team.id;
 
-        // Remove food and spawn new one
-        food.delete(foodOrb.id);
-        const newFood = generateRandomFood();
-        food.set(newFood.id, newFood);
+      // Players are allowed inside their own base
+      if (isPlayerOnThisTeam) {
+        return;
+      }
 
-        // Broadcast food collection event
-        io.emit('foodCollected', {
-          playerId: player.id,
-          foodId: foodOrb.id,
-          newFood: newFood,
-          newScore: player.score
-        });
+      // Lethal base contact for AI and for players entering another team's base
+      if (player.isAI || (player.teamId && player.teamId !== team.id)) {
+        if (!player.isDying) {
+          const currentTime = Date.now();
+          const timeSurvived = Math.floor((currentTime - player.spawnTime) / 1000); // in seconds
+
+          player.isDying = true;
+          player.deathStartTime = currentTime;
+          player.deathProgress = 0;
+          // Stop all movement immediately
+          player.vx = 0;
+          player.vy = 0;
+          player.targetVx = 0;
+          player.targetVy = 0;
+
+          // Environment kill: no killer, no score distribution
+          io.emit('playerDied', {
+            playerId: player.id,
+            killedBy: null,
+            assists: [],
+            stats: {
+              timeSurvived: timeSurvived,
+              kills: player.kills,
+              foodEaten: player.foodEaten,
+              premiumOrbsEaten: player.premiumOrbsEaten,
+              score: player.score,
+            },
+            killerScore: 0,
+          });
+        }
+
+        return;
+      }
+
+      // Fallback: if a player without a team somehow exists, gently push them out
+      const leftDist = player.x - base.x;
+      const rightDist = base.x + base.width - player.x;
+      const topDist = player.y - base.y;
+      const bottomDist = base.y + base.height - player.y;
+      const minDist = Math.min(leftDist, rightDist, topDist, bottomDist);
+
+      if (minDist === leftDist) {
+        player.x = base.x - totalSize;
+      } else if (minDist === rightDist) {
+        player.x = base.x + base.width + totalSize;
+      } else if (minDist === topDist) {
+        player.y = base.y - totalSize;
+      } else {
+        player.y = base.y + base.height + totalSize;
       }
     });
 
-    // Check collision with premium orbs
-    premiumOrbs.forEach((orb) => {
-      const dx = orb.x - player.x;
-      const dy = orb.y - player.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+    // If this player was killed by base contact this tick, skip further updates
+    if (player.isDying) {
+      return;
+    }
 
-      if (distance < actualSize + orb.size) {
-        // Player collected premium orb
-        player.score += orb.xp;
-        player.premiumOrbsEaten += 1; // Track premium orbs eaten
+    if (!player.isAI) {
+      // Check collision with food
+      food.forEach((foodOrb) => {
+        const dx = foodOrb.x - player.x;
+        const dy = foodOrb.y - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
 
-        // Trigger eating animation
-        player.isEating = true;
-        player.eatingProgress = 0;
+        if (distance < actualSize + foodOrb.size) {
+          // Player collected food
+          player.score += foodOrb.xp;
+          player.foodEaten += 1; // Track food eaten
 
-        // Remove orb and spawn new one
-        premiumOrbs.delete(orb.id);
-        const newOrb = generateRandomPremiumOrb();
-        premiumOrbs.set(newOrb.id, newOrb);
+          // Trigger eating animation
+          player.isEating = true;
+          player.eatingProgress = 0;
 
-        // Broadcast premium orb collection event
-        io.emit('premiumOrbCollected', {
-          playerId: player.id,
-          orbId: orb.id,
-          newOrb: newOrb,
-          newScore: player.score
-        });
-      }
-    });
+          // Remove food and spawn new one
+          food.delete(foodOrb.id);
+          const newFood = generateRandomFood();
+          food.set(newFood.id, newFood);
 
-    // Update max HP and current HP based on score
-    player.maxHP = getMaxHP(player.score);
+          // Broadcast food collection event
+          io.emit('foodCollected', {
+            playerId: player.id,
+            foodId: foodOrb.id,
+            newFood: newFood,
+            newScore: player.score
+          });
+        }
+      });
+
+      // Check collision with premium orbs
+      premiumOrbs.forEach((orb) => {
+        const dx = orb.x - player.x;
+        const dy = orb.y - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < actualSize + orb.size) {
+          // Player collected premium orb
+          player.score += orb.xp;
+          player.premiumOrbsEaten += 1; // Track premium orbs eaten
+
+          // Trigger eating animation
+          player.isEating = true;
+          player.eatingProgress = 0;
+
+          // Remove orb and spawn new one
+          premiumOrbs.delete(orb.id);
+          const newOrb = generateRandomPremiumOrb();
+          premiumOrbs.set(newOrb.id, newOrb);
+
+          // Broadcast premium orb collection event
+          io.emit('premiumOrbCollected', {
+            playerId: player.id,
+            orbId: orb.id,
+            newOrb: newOrb,
+            newScore: player.score
+          });
+        }
+      });
+    }
+
+    // Update max HP based on score (AI use fixed 500-score baseline for toughness)
+    const effectiveScoreForHP = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+    player.maxHP = getMaxHP(effectiveScoreForHP);
 
     // Update angry animation
     if (player.isAngry) {
@@ -718,11 +1052,13 @@ function gameLoop() {
   const playerArray = Array.from(players.values());
   for (let i = 0; i < playerArray.length; i++) {
     const player1 = playerArray[i];
-    const size1 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player1.score);
+    if (player1.isDying) continue;
+    const size1 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score);
 
     for (let j = i + 1; j < playerArray.length; j++) {
       const player2 = playerArray[j];
-      const size2 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player2.score);
+      if (player2.isDying) continue;
+      const size2 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score);
 
       // Calculate distance between players
       const dx = player2.x - player1.x;
@@ -771,13 +1107,18 @@ function gameLoop() {
         player2.vy += ny * impulseStrength;
 
         // Only apply damage if enough time has passed since last collision (cooldown: 0.5s)
-        const canDamage1 = (currentTime - player1.lastCollisionTime) > 500;
-        const canDamage2 = (currentTime - player2.lastCollisionTime) > 500;
+        // AI entities never damage each other
+        const bothAI = Boolean(player1.isAI && player2.isAI);
+        const sameTeam = Boolean(player1.teamId && player1.teamId === player2.teamId);
+        const canDamage1 = !bothAI && !sameTeam && (currentTime - player1.lastCollisionTime) > 500;
+        const canDamage2 = !bothAI && !sameTeam && (currentTime - player2.lastCollisionTime) > 500;
 
         if (canDamage1 || canDamage2) {
-          // Base damage from score progression
-          const baseDamageFrom1To2 = getDamagePoints(player1.score);
-          const baseDamageFrom2To1 = getDamagePoints(player2.score);
+          // Base damage from score progression (AI use fixed 500-score baseline)
+          const effectiveScore1 = player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score;
+          const effectiveScore2 = player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score;
+          const baseDamageFrom1To2 = getDamagePoints(effectiveScore1);
+          const baseDamageFrom2To1 = getDamagePoints(effectiveScore2);
 
           // Current speeds (magnitude of velocity vector)
           const speed1 = Math.sqrt((player1.vx || 0) * (player1.vx || 0) + (player1.vy || 0) * (player1.vy || 0));
@@ -863,20 +1204,28 @@ function gameLoop() {
             }
 
             // Distribute score
-            if (killer && assists.length === 0) {
-              // Solo kill - killer gets 75% of score
-              killer.score += scoreToDistribute;
-              killer.kills += 1;
-            } else if (killer && assists.length > 0) {
-              // Kill with assists - split evenly among all damagers
-              const scorePerPlayer = Math.floor(scoreToDistribute / (assists.length + 1));
-              killer.score += scorePerPlayer;
-              killer.kills += 1;
-              assists.forEach(assist => {
-                if (assist) {
-                  assist.score += scorePerPlayer;
-                }
-              });
+            if (player1.isAI) {
+              // Killing an AI hunter always grants a flat 500 points to the killer
+              if (killer) {
+                killer.score += 500;
+                killer.kills += 1;
+              }
+            } else {
+              if (killer && assists.length === 0) {
+                // Solo kill - killer gets 75% of score
+                killer.score += scoreToDistribute;
+                killer.kills += 1;
+              } else if (killer && assists.length > 0) {
+                // Kill with assists - split evenly among all damagers
+                const scorePerPlayer = Math.floor(scoreToDistribute / (assists.length + 1));
+                killer.score += scorePerPlayer;
+                killer.kills += 1;
+                assists.forEach(assist => {
+                  if (assist) {
+                    assist.score += scorePerPlayer;
+                  }
+                });
+              }
             }
 
             // Calculate time survived
@@ -936,20 +1285,28 @@ function gameLoop() {
             }
 
             // Distribute score
-            if (killer && assists.length === 0) {
-              // Solo kill - killer gets 75% of score
-              killer.score += scoreToDistribute;
-              killer.kills += 1;
-            } else if (killer && assists.length > 0) {
-              // Kill with assists - split evenly among all damagers
-              const scorePerPlayer = Math.floor(scoreToDistribute / (assists.length + 1));
-              killer.score += scorePerPlayer;
-              killer.kills += 1;
-              assists.forEach(assist => {
-                if (assist) {
-                  assist.score += scorePerPlayer;
-                }
-              });
+            if (player2.isAI) {
+              // Killing an AI hunter always grants a flat 500 points to the killer
+              if (killer) {
+                killer.score += 500;
+                killer.kills += 1;
+              }
+            } else {
+              if (killer && assists.length === 0) {
+                // Solo kill - killer gets 75% of score
+                killer.score += scoreToDistribute;
+                killer.kills += 1;
+              } else if (killer && assists.length > 0) {
+                // Kill with assists - split evenly among all damagers
+                const scorePerPlayer = Math.floor(scoreToDistribute / (assists.length + 1));
+                killer.score += scorePerPlayer;
+                killer.kills += 1;
+                assists.forEach(assist => {
+                  if (assist) {
+                    assist.score += scorePerPlayer;
+                  }
+                });
+              }
             }
 
             // Calculate time survived

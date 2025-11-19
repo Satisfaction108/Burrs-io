@@ -24,11 +24,23 @@ interface Player {
   isDying?: boolean
   deathProgress?: number
   lastCollisionTime?: number
+  isAI?: boolean
+  teamId?: string
+}
+
+interface TeamBase {
+  id: string
+  color: string
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 interface MapConfig {
   width: number
   height: number
+  teamBases?: TeamBase[]
 }
 
 interface Food {
@@ -96,6 +108,8 @@ interface ChatMessage {
   username: string
   text: string
   timestamp: number
+  teamId?: string | null
+  teamColor?: string
 }
 
 
@@ -174,7 +188,8 @@ const drawSpike = (
   health: number = 100,
   angryProgress?: number,
   deathProgress?: number,
-  skipUsername: boolean = false
+  skipUsername: boolean = false,
+  isAI: boolean = false,
 ) => {
   ctx.save()
   ctx.translate(x, y)
@@ -222,28 +237,44 @@ const drawSpike = (
 
   ctx.restore()
 
-  // Draw face (only for player spikes with username)
+  // Draw face (players + AI spikes)
   // Face doesn't rotate - always faces straight up
-  if (username && (!deathProgress || deathProgress < 1)) {
+  if ((username || isAI) && (!deathProgress || deathProgress < 1)) {
     ctx.save()
 
     // Fade face out as the spike dies
     const overlayAlpha = deathProgress ? 1 - deathProgress : 1
     ctx.globalAlpha = overlayAlpha
-    ctx.fillStyle = '#000000'
 
     const eating = eatingProgress || 0
     const angry = angryProgress || 0
 
-    // Interpolate between happy and angry expressions
-    const isAngry = angry > 0
+    // Extra outer ring to visually tag AI entities
+    if (isAI) {
+      ctx.save()
+      ctx.lineWidth = size * 0.14
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.85)'
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.6)'
+      ctx.shadowBlur = 10
+      ctx.beginPath()
+      ctx.arc(x, y, size * 1.1, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    // Base face color
+    ctx.fillStyle = '#000000'
+
+    // Interpolate between happy and angry expressions (AI are always angry)
+    const isAngry = isAI || angry > 0
 
     if (isAngry) {
       // ANGRY / SAD FACE
       // Strong eyebrows like "\ /" and a clear frown
       ctx.save()
       ctx.lineWidth = size * 0.08
-      ctx.strokeStyle = '#000000'
+      ctx.strokeStyle = isAI ? '#ff1744' : '#000000'
+      ctx.fillStyle = isAI ? '#ff1744' : '#000000'
 
       // Left eyebrow: downward toward center (\)
       ctx.beginPath()
@@ -277,7 +308,7 @@ const drawSpike = (
 
       ctx.restore()
     } else {
-      // HAPPY FACE
+      // HAPPY FACE (only non-AI spikes)
       // Eyes squint when eating (scale down vertically)
       const eyeScaleY = 1.4 - (eating * 0.8) // Squints from 1.4 to 0.6
 
@@ -568,7 +599,12 @@ const drawMinimap = (
   mapWidth: number,
   mapHeight: number,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  playerColor: string,
+  teamBases?: TeamBase[],
+  playerTeamId?: string,
+  players?: Map<string, Player>,
+  localPlayerId?: string | null,
 ) => {
   // Minimap configuration
   const minimapWidth = 180
@@ -619,6 +655,56 @@ const drawMinimap = (
     ctx.stroke()
   }
 
+  // Draw team bases
+  if (teamBases && teamBases.length > 0) {
+    teamBases.forEach((base) => {
+      const baseMinimapX = mapDisplayX + (base.x / mapWidth) * mapDisplayWidth
+      const baseMinimapY = mapDisplayY + (base.y / mapHeight) * mapDisplayHeight
+      const baseMinimapWidth = (base.width / mapWidth) * mapDisplayWidth
+      const baseMinimapHeight = (base.height / mapHeight) * mapDisplayHeight
+
+      ctx.save()
+
+      const isOwnBase = playerTeamId && base.id === playerTeamId
+
+      // Soft fill with team color
+      ctx.globalAlpha = isOwnBase ? 0.25 : 0.16
+      ctx.fillStyle = base.color
+      drawRoundedRect(ctx, baseMinimapX, baseMinimapY, baseMinimapWidth, baseMinimapHeight, 8)
+      ctx.fill()
+
+      // Outline - slightly brighter for your own base
+      ctx.globalAlpha = 1
+      ctx.lineWidth = isOwnBase ? 3 : 2
+      ctx.strokeStyle = isOwnBase
+        ? 'rgba(255, 255, 255, 0.85)'
+        : 'rgba(255, 255, 255, 0.35)'
+      drawRoundedRect(ctx, baseMinimapX, baseMinimapY, baseMinimapWidth, baseMinimapHeight, 8)
+      ctx.stroke()
+
+      ctx.restore()
+    })
+  }
+
+  // Draw same-team players as small pips
+  if (players && playerTeamId) {
+    players.forEach((player) => {
+      if (!player.teamId || player.teamId !== playerTeamId) return
+      if (localPlayerId && player.id === localPlayerId) return
+
+      const teammateMinimapX = mapDisplayX + (player.x / mapWidth) * mapDisplayWidth
+      const teammateMinimapY = mapDisplayY + (player.y / mapHeight) * mapDisplayHeight
+
+      ctx.save()
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = playerColor || '#00ffff'
+      ctx.beginPath()
+      ctx.arc(teammateMinimapX, teammateMinimapY, 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    })
+  }
+
   // Player position
   const playerMinimapX = mapDisplayX + (playerX / mapWidth) * mapDisplayWidth
   const playerMinimapY = mapDisplayY + (playerY / mapHeight) * mapDisplayHeight
@@ -633,8 +719,10 @@ const drawMinimap = (
 
   ctx.save()
 
+  const markerColor = playerColor || '#00ffff'
+
   // Soft neon glow
-  ctx.shadowColor = '#00ffff'
+  ctx.shadowColor = markerColor
   ctx.shadowBlur = 12
   ctx.fillStyle = '#ffffff'
 
@@ -656,7 +744,7 @@ const drawMinimap = (
 
   // Inner colored body (matches player spike style)
   ctx.shadowBlur = 6
-  ctx.fillStyle = '#00ffff'
+  ctx.fillStyle = markerColor
   ctx.beginPath()
   ctx.arc(playerMinimapX, playerMinimapY, innerRadius * 0.9, 0, Math.PI * 2)
   ctx.fill()
@@ -667,12 +755,12 @@ const drawMinimap = (
   ctx.restore()
 }
 
-// Draw notifications
+// Draw notifications - simple, flat neon banners
 const drawNotifications = (ctx: CanvasRenderingContext2D, notifications: Notification[], canvasWidth: number) => {
   const now = Date.now()
-  const notificationHeight = 60
-  const notificationWidth = 350
-  const startY = 10 // 5 pixels from the top
+  const notificationHeight = 44
+  const horizontalMargin = 10
+  const verticalMargin = 10
 
   notifications.forEach((notification, index) => {
     const age = now - notification.timestamp
@@ -683,88 +771,58 @@ const drawNotifications = (ctx: CanvasRenderingContext2D, notifications: Notific
     // Calculate opacity with fade-in and fade-out
     let opacity = 1
     if (age < fadeInDuration) {
-      // Fade in
       opacity = age / fadeInDuration
     } else if (age > fadeOutStart) {
-      // Fade out
       opacity = 1 - ((age - fadeOutStart) / (duration - fadeOutStart))
     }
     notification.opacity = Math.max(0, Math.min(1, opacity))
 
-    // Position notifications stacked vertically
-    const y = startY + (index * (notificationHeight + 12))
-    const x = (canvasWidth - notificationWidth) / 2
-
+    // Measure text to determine dynamic width
     ctx.save()
+    ctx.font = '700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    const iconSpace = 24 // space reserved for a small icon
+    const textPaddingX = 18
+    const maxWidth = canvasWidth - horizontalMargin * 2
+    const textMetrics = ctx.measureText(notification.message)
+    const rawWidth = iconSpace + textPaddingX * 2 + textMetrics.width
+    const notificationWidth = Math.min(maxWidth, rawWidth)
+
+    // Center horizontally with 10px margin from canvas edges
+    const x = Math.max(horizontalMargin, (canvasWidth - notificationWidth) / 2)
+    const y = verticalMargin + index * (notificationHeight + 10)
+
     ctx.globalAlpha = notification.opacity
 
-    // Professional, sleek notification design
+    // Background - flat dark rounded rectangle
     const radius = 10
-
-    // Outer glow with neon effect
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)'
-    ctx.shadowBlur = 25
-    ctx.shadowOffsetY = 4
-
-    // Background - dark and professional
+    ctx.fillStyle = 'rgba(10, 10, 25, 0.96)'
     drawRoundedRect(ctx, x, y, notificationWidth, notificationHeight, radius)
-    ctx.fillStyle = 'rgba(15, 15, 30, 0.95)'
     ctx.fill()
 
-    // Clean border with golden accent
-    ctx.strokeStyle = 'rgba(255, 215, 0, 0.6)'
-    ctx.lineWidth = 2
-    ctx.shadowBlur = 0
+    // Border - subtle neon blue
+    ctx.strokeStyle = 'rgba(0, 217, 255, 0.75)'
+    ctx.lineWidth = 1.5
     drawRoundedRect(ctx, x, y, notificationWidth, notificationHeight, radius)
     ctx.stroke()
 
-    // Left accent bar
-    const accentWidth = 4
-    drawRoundedRect(ctx, x, y, accentWidth, notificationHeight, radius)
-    ctx.fillStyle = '#ffd700'
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)'
-    ctx.shadowBlur = 10
-    ctx.fill()
-    ctx.shadowBlur = 0
-
-    // Draw octagon icon (premium orb shape)
-    const iconSize = 20
-    const iconX = x + 30
-    const iconY = y + notificationHeight / 2
-
-    ctx.save()
-    ctx.translate(iconX, iconY)
-    ctx.rotate(Date.now() / 1000) // Slow rotation
-
-    // Draw octagon
+    // Optional left icon: simple small cyan circle
+    const iconCenterX = x + textPaddingX
+    const iconCenterY = y + notificationHeight / 2
+    const iconRadius = 6
     ctx.beginPath()
-    for (let i = 0; i < 8; i++) {
-      const angle = (Math.PI / 4) * i
-      const px = Math.cos(angle) * iconSize
-      const py = Math.sin(angle) * iconSize
-      if (i === 0) {
-        ctx.moveTo(px, py)
-      } else {
-        ctx.lineTo(px, py)
-      }
-    }
-    ctx.closePath()
-    ctx.fillStyle = '#ffd700'
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.9)'
-    ctx.shadowBlur = 15
+    ctx.arc(iconCenterX, iconCenterY, iconRadius, 0, Math.PI * 2)
+    ctx.fillStyle = '#00d9ff'
     ctx.fill()
-    ctx.restore()
 
-    // Text - clean and professional
-    ctx.shadowBlur = 0
-    ctx.fillStyle = '#ffffff'
-    ctx.font = '700 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    // Text - neon blue, left-aligned
+    ctx.fillStyle = '#00e5ff'
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)'
     ctx.shadowBlur = 3
-    ctx.shadowOffsetY = 1
-    ctx.fillText(notification.message, x + 60, y + notificationHeight / 2)
+    const textX = iconCenterX + iconRadius + 10
+    const textY = y + notificationHeight / 2
+    ctx.fillText(notification.message, textX, textY)
 
     ctx.restore()
   })
@@ -991,8 +1049,9 @@ const drawLeaderboard = (
   localPlayerId: string | null,
   canvasWidth: number
 ) => {
-  // Get top 10 players sorted by score
+  // Get top 10 non-AI players sorted by score
   const sortedPlayers = Array.from(players.values())
+    .filter((p) => !p.isAI)
     .sort((a, b) => b.score - a.score)
     .slice(0, 10)
 
@@ -1038,6 +1097,7 @@ const drawLeaderboard = (
     const rowY = y + headerHeight + index * rowHeight
     const isLocalPlayer = player.id === localPlayerId
     const isTopThree = index < 3
+    const localColor = player.color || '#ffd700'
 
     // Special highlight for top 3
     if (isTopThree) {
@@ -1048,9 +1108,9 @@ const drawLeaderboard = (
       ctx.fillRect(x, rowY, width, rowHeight)
     }
 
-    // Highlight local player row
+    // Highlight local player row in their team color
     if (isLocalPlayer) {
-      ctx.fillStyle = 'rgba(255, 215, 0, 0.15)'
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
       ctx.fillRect(x, rowY, width, rowHeight)
     }
 
@@ -1071,7 +1131,7 @@ const drawLeaderboard = (
 
     // Player name
     ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.fillStyle = isLocalPlayer ? '#ffd700' : (isTopThree ? '#ffffff' : 'rgba(255, 255, 255, 0.9)')
+    ctx.fillStyle = isLocalPlayer ? localColor : (isTopThree ? '#ffffff' : 'rgba(255, 255, 255, 0.9)')
     const maxNameWidth = 120
     let displayName = player.username
     ctx.textAlign = 'left'
@@ -1090,7 +1150,7 @@ const drawLeaderboard = (
 
     // Score
     ctx.font = '700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.fillStyle = isLocalPlayer ? '#ffd700' : (isTopThree ? '#ffd700' : 'rgba(255, 255, 255, 0.9)')
+    ctx.fillStyle = isLocalPlayer ? localColor : (isTopThree ? '#ffd700' : 'rgba(255, 255, 255, 0.9)')
     ctx.textAlign = 'right'
     ctx.fillText(player.score.toLocaleString(), x + width - 15, rowY + rowHeight / 2)
   })
@@ -1436,6 +1496,47 @@ function App() {
     startTime: number
     duration: number
   }>>([])
+
+  // Touch / mobile controls
+  const [isTouchDevice, setIsTouchDevice] = useState(false)
+  const [joystickActive, setJoystickActive] = useState(false)
+  const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null)
+  const [joystickVector, setJoystickVector] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+
+  // Detect touch-capable devices for mobile/iPad controls
+  useEffect(() => {
+    const hasTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || (navigator as any).msMaxTouchPoints > 0
+    setIsTouchDevice(hasTouch)
+  }, [])
+
+  // Map joystick vector into keyboard-like input flags
+  const applyJoystickToInput = () => {
+    if (!joystickActive) {
+      keysRef.current = { w: false, a: false, s: false, d: false }
+      return
+    }
+
+    const { x, y } = joystickVector
+    const deadZone = 0.2
+    const up = y < -deadZone
+    const down = y > deadZone
+    const left = x < -deadZone
+    const right = x > deadZone
+
+    keysRef.current = {
+      w: up,
+      a: left,
+      s: down,
+      d: right,
+    }
+  }
+
+  // Ensure joystick continually drives input when active
+  useEffect(() => {
+    applyJoystickToInput()
+  }, [joystickActive, joystickVector])
+
   // Score popups
   const scorePopupsRef = useRef<ScorePopup[]>([])
   // Collision particles
@@ -1584,6 +1685,7 @@ function App() {
       ctx.restore()
 
       // Handle collisions
+
       for (let i = 0; i < backgroundSpikesRef.current.length; i++) {
         for (let j = i + 1; j < backgroundSpikesRef.current.length; j++) {
           handleBackgroundCollision(backgroundSpikesRef.current[i], backgroundSpikesRef.current[j])
@@ -2227,6 +2329,44 @@ function App() {
       )
       ctx.restore()
 
+      // Draw team bases in world space so everyone can see base locations
+      const teamBases = mapConfigRef.current.teamBases
+      if (teamBases && teamBases.length > 0) {
+        teamBases.forEach((base) => {
+          ctx.save()
+
+          const borderRadius = 26
+
+          // Soft filled area in team color
+          ctx.globalAlpha = 0.14
+          ctx.fillStyle = base.color
+          drawRoundedRect(ctx, base.x, base.y, base.width, base.height, borderRadius)
+          ctx.fill()
+
+          // Outer neutral border for clarity
+          ctx.globalAlpha = 1
+          ctx.lineWidth = 3
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)'
+          drawRoundedRect(ctx, base.x, base.y, base.width, base.height, borderRadius)
+          ctx.stroke()
+
+          // Inner neon team-colored border
+          ctx.lineWidth = 2
+          ctx.strokeStyle = base.color
+          drawRoundedRect(
+            ctx,
+            base.x + 6,
+            base.y + 6,
+            base.width - 12,
+            base.height - 12,
+            borderRadius - 6
+          )
+          ctx.stroke()
+
+          ctx.restore()
+        })
+      }
+
       // Draw all food orbs
       foodRef.current.forEach((food) => {
         drawFood(ctx, food)
@@ -2282,8 +2422,9 @@ function App() {
         }
 
         // Calculate size based on player's score (from server)
-        const playerScore = player.score || 0
-        const sizeMultiplier = getSizeMultiplier(playerScore)
+        // AI hunters keep a fixed physical size so they don't snowball visually.
+        const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
+        const sizeMultiplier = getSizeMultiplier(baseScoreForSize)
         const scaledSize = PLAYER_SIZE * sizeMultiplier
 
         drawSpike(
@@ -2298,15 +2439,16 @@ function App() {
           player.health || 100, // Use server-provided health
           player.angryProgress || 0, // Use server-provided angry progress
           player.deathProgress || 0, // Use server-provided death progress
-          true // Skip username in first pass
+          true, // Skip username in first pass (draw in second pass)
+          player.isAI ?? false,
         )
       })
 
       // Second pass: Draw all player usernames on top
       playersRef.current.forEach((player) => {
         // Calculate size based on player's score (from server)
-        const playerScore = player.score || 0
-        const sizeMultiplier = getSizeMultiplier(playerScore)
+        const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
+        const sizeMultiplier = getSizeMultiplier(baseScoreForSize)
         const scaledSize = PLAYER_SIZE * sizeMultiplier
         const deathProgress = player.deathProgress || 0
 
@@ -2397,7 +2539,12 @@ function App() {
           mapConfigRef.current.width,
           mapConfigRef.current.height,
           canvas.width,
-          canvas.height
+          canvas.height,
+          localPlayer.color,
+          mapConfigRef.current.teamBases,
+          localPlayer.teamId,
+          playersRef.current,
+          localPlayerIdRef.current,
         )
       }
 
@@ -2545,10 +2692,90 @@ function App() {
     chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight
   }, [chatMessages, isChatOpen])
 
+  const killerPlayer = deathStats?.killedBy
+    ? playersRef.current.get(deathStats.killedBy)
+    : undefined
+
+  const causeOfDeath = (() => {
+    if (!deathStats) return ''
+    if (!deathStats.killedBy) {
+      return 'Destroyed by base defenses'
+    }
+    if (killerPlayer) {
+      if (killerPlayer.isAI) {
+        return 'Killed by AI HUNTER'
+      }
+      return `Killed by ${killerPlayer.username}`
+    }
+    return 'Killed by another spike'
+  })()
+
+  const causeOfDeathColor = (() => {
+    if (!deathStats) return '#ffffff'
+    if (!deathStats.killedBy) {
+      return '#ff8080'
+    }
+    if (killerPlayer?.isAI) {
+      return '#00ff88'
+    }
+    return killerPlayer?.color || '#ffffff'
+  })()
+
+  const deathAssistNames =
+    deathStats?.assists
+      ?.map((id) => playersRef.current.get(id))
+      .filter((p): p is Player => Boolean(p))
+      .map((p) => p.username) ?? []
+
+  const hasAssists = deathAssistNames.length > 0
+
+
+
+
+
   return (
     <div className="app">
       <div className={`grid-background ${gameState === 'playing' ? 'hidden' : ''}`} />
       <canvas ref={canvasRef} className={`game-canvas ${gameState === 'playing' ? 'playing' : ''}`} />
+
+      {gameState === 'playing' && isTouchDevice && (
+        <div
+          className={`joystick-container ${joystickActive ? 'active' : ''}`}
+          onTouchStart={(e: React.TouchEvent<HTMLDivElement>) => {
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+            setJoystickCenter(center)
+            setJoystickActive(true)
+          }}
+          onTouchMove={(e: React.TouchEvent<HTMLDivElement>) => {
+            if (!joystickCenter) return
+            const touch = e.touches[0]
+            const dx = touch.clientX - joystickCenter.x
+            const dy = touch.clientY - joystickCenter.y
+            const maxDist = 70
+            const dist = Math.min(Math.sqrt(dx * dx + dy * dy), maxDist)
+            const angle = Math.atan2(dy, dx)
+            const normX = (dist / maxDist) * Math.cos(angle)
+            const normY = (dist / maxDist) * Math.sin(angle)
+            setJoystickVector({ x: normX, y: normY })
+          }}
+          onTouchEnd={() => {
+            setJoystickActive(false)
+            setJoystickVector({ x: 0, y: 0 })
+          }}
+        >
+          <div className="joystick-base" />
+          <div
+            className="joystick-thumb"
+            style={{
+              transform: joystickActive && joystickCenter
+                ? `translate(${joystickVector.x * 40}px, ${joystickVector.y * 40}px)`
+                : 'translate(0, 0)',
+            }}
+          />
+        </div>
+      )}
+
 
       {gameState === 'playing' && (
         <button
@@ -2592,7 +2819,17 @@ function App() {
           <div className="chat-log" ref={chatLogRef}>
             {chatMessages.map((msg) => (
               <div key={msg.id} className="chat-message">
-                <span className="chat-username">{msg.username}</span>
+                <span
+                  className="chat-username"
+                  style={{
+                    color:
+                      msg.teamColor ||
+                      playersRef.current.get(msg.playerId)?.color ||
+                      '#ffffff',
+                  }}
+                >
+                  {msg.username}
+                </span>
                 <span className="chat-text">{msg.text}</span>
               </div>
             ))}
@@ -2675,6 +2912,26 @@ function App() {
         <div className="death-screen">
           <div className="death-content">
             <h1 className="death-title">You Died</h1>
+
+            <div className="death-cause">
+              <div className="death-cause-main">
+                <span className="death-cause-label">Cause of death</span>
+                <span
+                  className="death-cause-value"
+                  style={{ color: causeOfDeathColor }}
+                >
+                  {causeOfDeath}
+                </span>
+              </div>
+              {hasAssists && (
+                <div className="death-assists">
+                  <span className="death-assists-label">Assisted by</span>
+                  <span className="death-assists-value">
+                    {deathAssistNames.join(', ')}
+                  </span>
+                </div>
+              )}
+            </div>
 
             <div className="death-stats">
               <div className="stat-row">
