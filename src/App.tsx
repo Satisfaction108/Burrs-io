@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import './App.css'
 
+type SpikeType = 'Spike' | 'Prickle' | 'Thorn' | 'Bristle' | 'Bulwark' | 'Starflare' | 'Mauler'
+
 interface Player {
   id: string
   username: string
@@ -26,6 +28,10 @@ interface Player {
   lastCollisionTime?: number
   isAI?: boolean
   teamId?: string
+  spikeType?: SpikeType
+  abilityActive?: boolean
+  abilityProgress?: number
+  lastAbilityTime?: number
 }
 
 interface TeamBase {
@@ -171,6 +177,71 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)]
 }
 
+// Evolution configuration
+const EVOLUTION_THRESHOLD = 5000
+const EVOLUTION_OPTIONS = [
+  {
+    type: 'Prickle' as SpikeType,
+    name: 'Prickle',
+    description: 'Many short spikes — lots of tiny pricks',
+    stats: { speed: -10, damage: 20, health: 0 },
+    ability: 'Super Density',
+    abilityDescription: '2x body damage + orange shield for 2s',
+    abilityCooldown: 20000,
+    abilityDuration: 2000,
+  },
+  {
+    type: 'Thorn' as SpikeType,
+    name: 'Thorn',
+    description: 'Few long spikes',
+    stats: { speed: 0, damage: 15, health: -10 },
+    ability: 'Ghost Mode',
+    abilityDescription: 'Pass through spikes for 3s',
+    abilityCooldown: 30000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'Bristle' as SpikeType,
+    name: 'Bristle',
+    description: 'Dense medium spikes—balanced, lots of contact area',
+    stats: { speed: 20, damage: 0, health: 0 },
+    ability: 'Double Speed',
+    abilityDescription: '2x speed for 3s',
+    abilityCooldown: 30000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'Bulwark' as SpikeType,
+    name: 'Bulwark',
+    description: 'Thick, blunt spikes — tanky and chunky',
+    stats: { speed: -30, damage: 5, health: 20 },
+    ability: 'Invincibility',
+    abilityDescription: 'Invulnerable for 3s',
+    abilityCooldown: 30000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'Starflare' as SpikeType,
+    name: 'Starflare',
+    description: 'Thin very many long spikes',
+    stats: { speed: 0, damage: 15, health: -10 },
+    ability: 'Teleportation',
+    abilityDescription: 'Teleport to base',
+    abilityCooldown: 180000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'Mauler' as SpikeType,
+    name: 'Mauler',
+    description: 'Jagged, irregular spikes',
+    stats: { speed: 0, damage: 5, health: 5 },
+    ability: 'Fortress',
+    abilityDescription: 'Defense shield for 3s',
+    abilityCooldown: 60000,
+    abilityDuration: 3000,
+  },
+]
+
 // Food tier configuration is defined on the server side
 
 // Food generation is now handled server-side
@@ -190,6 +261,8 @@ const drawSpike = (
   deathProgress?: number,
   skipUsername: boolean = false,
   isAI: boolean = false,
+  spikeType: SpikeType = 'Spike',
+  opacity: number = 1, // Add opacity parameter for ghost mode
 ) => {
   ctx.save()
   ctx.translate(x, y)
@@ -198,7 +271,7 @@ const drawSpike = (
   // Apply death animation effects
   if (deathProgress && deathProgress > 0) {
     // Fade out
-    ctx.globalAlpha = 1 - deathProgress
+    ctx.globalAlpha = (1 - deathProgress) * opacity
 
     // Shrink and spin faster
     const shrinkScale = 1 - (deathProgress * 0.8) // Shrink to 20% size
@@ -206,16 +279,63 @@ const drawSpike = (
 
     // Extra rotation during death
     ctx.rotate(deathProgress * Math.PI * 4) // 2 full rotations
+  } else {
+    // Apply opacity for ghost mode
+    ctx.globalAlpha = opacity
   }
 
-  // Draw white star spikes (scaled proportionally with size)
-  const outerRadius = size * 1.29 // Scales with size (was size + 10)
-  const innerRadius = size * 0.83 // Scales with size (was size - 6)
-  const spikes = 8
+  // Draw white star spikes based on spike type
+  let outerRadius = size * 1.29
+  let innerRadius = size * 0.83
+  let spikes = 8
+
+  // Customize spike pattern based on type
+  switch (spikeType) {
+    case 'Prickle': // Many short spikes
+      spikes = 16
+      outerRadius = size * 1.15
+      innerRadius = size * 0.88
+      break
+    case 'Thorn': // Few VERY long spikes
+      spikes = 5
+      outerRadius = size * 1.7 // Much longer
+      innerRadius = size * 0.7
+      break
+    case 'Bristle': // Dense medium spikes
+      spikes = 12
+      outerRadius = size * 1.25
+      innerRadius = size * 0.85
+      break
+    case 'Bulwark': // Thick, blunt spikes
+      spikes = 6
+      outerRadius = size * 1.2
+      innerRadius = size * 0.9
+      break
+    case 'Starflare': // Thin very many long spikes
+      spikes = 20
+      outerRadius = size * 1.4
+      innerRadius = size * 0.82
+      break
+    case 'Mauler': // Fewer, thicker, more aggressive spikes
+      spikes = 7
+      outerRadius = size * 1.45
+      innerRadius = size * 0.75
+      break
+    default: // Spike (default)
+      spikes = 8
+      outerRadius = size * 1.29
+      innerRadius = size * 0.83
+  }
 
   ctx.beginPath()
   for (let i = 0; i < spikes * 2; i++) {
-    const radius = i % 2 === 0 ? outerRadius : innerRadius
+    let radius = i % 2 === 0 ? outerRadius : innerRadius
+
+    // Add irregularity for Mauler - more pronounced variation
+    if (spikeType === 'Mauler' && i % 2 === 0) {
+      radius *= 0.8 + Math.sin(i * 2.3) * 0.25 // More dramatic spike length variation
+    }
+
     const angle = (Math.PI * i) / spikes
     const px = Math.cos(angle) * radius
     const py = Math.sin(angle) * radius
@@ -1223,6 +1343,92 @@ const drawCollisionEffects = (
   }
 }
 
+
+// Draw evolution effects (spectacular upgrade animation)
+const drawEvolutionEffects = (
+  ctx: CanvasRenderingContext2D,
+  effects: Array<{ x: number; y: number; startTime: number; duration: number; spikeType: SpikeType }>
+) => {
+  const currentTime = Date.now()
+
+  effects.forEach((effect) => {
+    const elapsed = currentTime - effect.startTime
+    const progress = Math.min(elapsed / effect.duration, 1)
+
+    if (progress < 1) {
+      ctx.save()
+
+      const opacity = 1 - progress
+      const expandRadius = 150 * progress
+
+      // Determine color based on spike type
+      let color1 = '255, 200, 50'
+      let color2 = '255, 150, 0'
+
+      switch (effect.spikeType) {
+        case 'Prickle': color1 = '255, 140, 0'; color2 = '255, 100, 0'; break
+        case 'Thorn': color1 = '150, 200, 255'; color2 = '100, 150, 255'; break
+        case 'Bristle': color1 = '0, 255, 255'; color2 = '0, 200, 255'; break
+        case 'Bulwark': color1 = '255, 215, 0'; color2 = '255, 180, 0'; break
+        case 'Starflare': color1 = '255, 230, 100'; color2 = '200, 150, 255'; break
+        case 'Mauler': color1 = '255, 50, 50'; color2 = '200, 0, 0'; break
+      }
+
+      // Expanding energy rings
+      for (let ring = 0; ring < 5; ring++) {
+        const ringProgress = (progress + ring * 0.1) % 1
+        const ringRadius = expandRadius * ringProgress
+        const ringOpacity = opacity * (1 - ringProgress)
+
+        ctx.beginPath()
+        ctx.arc(effect.x, effect.y, ringRadius, 0, Math.PI * 2)
+        ctx.strokeStyle = `rgba(${color1}, ${ringOpacity * 0.8})`
+        ctx.lineWidth = 6
+        ctx.stroke()
+      }
+
+      // Central burst
+      const burstGrad = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, expandRadius * 0.5)
+      burstGrad.addColorStop(0, `rgba(${color1}, ${opacity * 0.9})`)
+      burstGrad.addColorStop(0.5, `rgba(${color2}, ${opacity * 0.6})`)
+      burstGrad.addColorStop(1, `rgba(${color2}, 0)`)
+
+      ctx.fillStyle = burstGrad
+      ctx.beginPath()
+      ctx.arc(effect.x, effect.y, expandRadius * 0.5, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Radiating particles
+      const particleCount = 24
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2
+        const particleDist = expandRadius * 0.8
+        const px = effect.x + Math.cos(angle) * particleDist
+        const py = effect.y + Math.sin(angle) * particleDist
+
+        const particleGrad = ctx.createRadialGradient(px, py, 0, px, py, 8)
+        particleGrad.addColorStop(0, `rgba(${color1}, ${opacity})`)
+        particleGrad.addColorStop(1, `rgba(${color1}, 0)`)
+
+        ctx.fillStyle = particleGrad
+        ctx.beginPath()
+        ctx.arc(px, py, 8, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.restore()
+    }
+  })
+
+  // Remove completed effects
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const elapsed = currentTime - effects[i].startTime
+    if (elapsed >= effects[i].duration) {
+      effects.splice(i, 1)
+    }
+  }
+}
+
 // Draw speed boost effects (cyan energy burst)
 const drawBoostEffects = (
   ctx: CanvasRenderingContext2D,
@@ -1464,6 +1670,158 @@ const drawCollisionParticles = (ctx: CanvasRenderingContext2D, particles: Collis
 }
 
 
+
+// Evolution Option Component with rotating spike preview
+const EvolutionOption: React.FC<{
+  option: typeof EVOLUTION_OPTIONS[0]
+  onSelect: () => void
+}> = ({ option, onSelect }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rotationRef = useRef(0)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let animationId: number
+
+    const animate = () => {
+      rotationRef.current += 0.02
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+      // Draw rotating spike
+      const centerX = canvas.width / 2
+      const centerY = canvas.height / 2
+      const size = 40
+
+      ctx.save()
+      ctx.translate(centerX, centerY)
+      ctx.rotate(rotationRef.current)
+
+      // Draw spike pattern
+      let outerRadius = size * 1.29
+      let innerRadius = size * 0.83
+      let spikes = 8
+
+      switch (option.type) {
+        case 'Prickle':
+          spikes = 16
+          outerRadius = size * 1.15
+          innerRadius = size * 0.88
+          break
+        case 'Thorn':
+          spikes = 5
+          outerRadius = size * 1.7
+          innerRadius = size * 0.7
+          break
+        case 'Bristle':
+          spikes = 12
+          outerRadius = size * 1.25
+          innerRadius = size * 0.85
+          break
+        case 'Bulwark':
+          spikes = 6
+          outerRadius = size * 1.2
+          innerRadius = size * 0.9
+          break
+        case 'Starflare':
+          spikes = 20
+          outerRadius = size * 1.4
+          innerRadius = size * 0.82
+          break
+        case 'Mauler':
+          spikes = 7
+          outerRadius = size * 1.45
+          innerRadius = size * 0.75
+          break
+      }
+
+      // Draw white spikes
+      ctx.beginPath()
+      for (let i = 0; i < spikes * 2; i++) {
+        let radius = i % 2 === 0 ? outerRadius : innerRadius
+
+        if (option.type === 'Mauler' && i % 2 === 0) {
+          radius *= 0.8 + Math.sin(i * 2.3) * 0.25
+        }
+
+        const angle = (Math.PI * i) / spikes
+        const px = Math.cos(angle) * radius
+        const py = Math.sin(angle) * radius
+        if (i === 0) {
+          ctx.moveTo(px, py)
+        } else {
+          ctx.lineTo(px, py)
+        }
+      }
+      ctx.closePath()
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+
+      // Draw colored body
+      ctx.beginPath()
+      ctx.arc(0, 0, size, 0, Math.PI * 2)
+      ctx.fillStyle = '#4a9eff'
+      ctx.fill()
+
+      ctx.restore()
+
+      animationId = requestAnimationFrame(animate)
+    }
+
+    animate()
+
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId)
+    }
+  }, [option.type])
+
+  return (
+    <div className="evolution-option" onClick={onSelect}>
+      <canvas ref={canvasRef} width={120} height={120} className="spike-preview" />
+      <h3 className="evolution-option-name">{option.name}</h3>
+      <p className="evolution-option-description">{option.description}</p>
+
+      <div className="evolution-stats">
+        <div className="stat-item">
+          <svg className="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" />
+          </svg>
+          <span className={`stat-text ${option.stats.speed > 0 ? 'positive' : option.stats.speed < 0 ? 'negative' : 'neutral'}`}>
+            {option.stats.speed > 0 ? '+' : ''}{option.stats.speed}% Speed
+          </span>
+        </div>
+        <div className="stat-item">
+          <svg className="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+          </svg>
+          <span className={`stat-text ${option.stats.damage > 0 ? 'positive' : option.stats.damage < 0 ? 'negative' : 'neutral'}`}>
+            {option.stats.damage > 0 ? '+' : ''}{option.stats.damage}% Damage
+          </span>
+        </div>
+        <div className="stat-item">
+          <svg className="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+          </svg>
+          <span className={`stat-text ${option.stats.health > 0 ? 'positive' : option.stats.health < 0 ? 'negative' : 'neutral'}`}>
+            {option.stats.health > 0 ? '+' : ''}{option.stats.health}% Health
+          </span>
+        </div>
+      </div>
+
+      <div className="evolution-ability">
+        <div className="ability-name">{option.ability}</div>
+        <div className="ability-description">{option.abilityDescription}</div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [displayName, setDisplayName] = useState('')
   const [gameState, setGameState] = useState<GameState>('menu')
@@ -1472,6 +1830,9 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
   const [isChatOpen, setIsChatOpen] = useState(true)
+  const [showEvolutionTree, setShowEvolutionTree] = useState(false)
+  const [hasEvolved, setHasEvolved] = useState(false)
+  const [currentSpikeType, setCurrentSpikeType] = useState<SpikeType>('Spike')
   // Health and score are now managed server-side and received via player object
   const chatLogRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<HTMLInputElement | null>(null)
@@ -1556,6 +1917,14 @@ function App() {
     startTime: number
     duration: number
   }>>([])
+  // Evolution effects
+  const evolutionEffectsRef = useRef<Array<{
+    x: number
+    y: number
+    startTime: number
+    duration: number
+    spikeType: SpikeType
+  }>>([])
   // Damage popups (collision feedback)
   const damagePopupsRef = useRef<DamagePopup[]>([])
 
@@ -1563,6 +1932,9 @@ function App() {
   const [boostOnCooldown, setBoostOnCooldown] = useState(false)
   const boostCooldownTimeoutRef = useRef<number | null>(null)
 
+  // Ability cooldown UI state
+  const [abilityOnCooldown, setAbilityOnCooldown] = useState(false)
+  const abilityCooldownTimeoutRef = useRef<number | null>(null)
 
   // Camera position for smooth interpolation
   const cameraRef = useRef({ x: 0, y: 0 })
@@ -1720,6 +2092,10 @@ function App() {
         return
       }
 
+      // Don't allow input during evolution tree or death
+      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+      const isDying = localPlayer?.isDying || false
+
       const key = e.key.toLowerCase()
 
       // Press Enter to open/focus chat while playing
@@ -1730,6 +2106,12 @@ function App() {
             chatInputRef.current.focus()
           }
         }, 0)
+        e.preventDefault()
+        return
+      }
+
+      // Block movement and abilities during death or evolution tree
+      if (isDying || showEvolutionTree) {
         e.preventDefault()
         return
       }
@@ -1753,6 +2135,19 @@ function App() {
       if (key === 'b') {
         if (!e.repeat) {
           triggerSpeedBoost()
+        }
+        e.preventDefault()
+      }
+      if (key === 'n') {
+        if (!e.repeat) {
+          triggerAbility()
+        }
+        e.preventDefault()
+      }
+      // Debug hack: Z key sets score to 4999
+      if (key === 'z') {
+        if (!e.repeat && socketRef.current) {
+          socketRef.current.emit('debugSetScore', 4999)
         }
         e.preventDefault()
       }
@@ -1923,6 +2318,11 @@ function App() {
 
       // Update player score for tracking
       playerScoresRef.current.set(data.playerId, newScore)
+
+      // Check if local player reached evolution threshold
+      if (data.playerId === localPlayerIdRef.current && !hasEvolved && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
+        setShowEvolutionTree(true)
+      }
     })
 
     // Handle premium orb collection events
@@ -1969,6 +2369,11 @@ function App() {
 
       // Update player score for tracking
       playerScoresRef.current.set(data.playerId, newScore)
+
+      // Check if local player reached evolution threshold
+      if (data.playerId === localPlayerIdRef.current && !hasEvolved && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
+        setShowEvolutionTree(true)
+      }
     })
 
     // Handle successful speed boost usage (for cooldown UI)
@@ -1982,6 +2387,20 @@ function App() {
       boostCooldownTimeoutRef.current = window.setTimeout(() => {
         setBoostOnCooldown(false)
         boostCooldownTimeoutRef.current = null
+      }, data.cooldownMs)
+    })
+
+    // Handle successful ability usage (for cooldown UI)
+    socket.on('abilityUsed', (data: { cooldownMs: number; usedAt: number; duration: number; abilityType: string }) => {
+      setAbilityOnCooldown(true)
+
+      if (abilityCooldownTimeoutRef.current !== null) {
+        window.clearTimeout(abilityCooldownTimeoutRef.current)
+      }
+
+      abilityCooldownTimeoutRef.current = window.setTimeout(() => {
+        setAbilityOnCooldown(false)
+        abilityCooldownTimeoutRef.current = null
       }, data.cooldownMs)
     })
 
@@ -2135,10 +2554,37 @@ function App() {
       killerScore: number;
     }) => {
       const localId = localPlayerIdRef.current
+      const victim = playersRef.current.get(data.playerId)
+
+      // If an AI entity died, create a green burst effect at its position
+      if (victim && victim.isAI) {
+        boostEffectsRef.current.push({
+          x: victim.x,
+          y: victim.y,
+          startTime: Date.now(),
+          duration: 800,
+        })
+
+        // Create green particles for AI death
+        const particleCount = 30
+        for (let i = 0; i < particleCount; i++) {
+          const angle = (i / particleCount) * Math.PI * 2
+          const speed = 3 + Math.random() * 5
+          collisionParticlesRef.current.push({
+            x: victim.x,
+            y: victim.y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            size: 3 + Math.random() * 4,
+            color: '#00ff88', // Green color for AI
+            life: 40 + Math.random() * 30,
+            maxLife: 70
+          })
+        }
+      }
 
       // If local player is the killer, show a kill popup at the victim position
       if (localId && data.killedBy === localId) {
-        const victim = playersRef.current.get(data.playerId)
         if (victim) {
           damagePopupsRef.current.push({
             id: `${Date.now()}-${Math.random()}`,
@@ -2199,6 +2645,14 @@ function App() {
     if (gameState !== 'playing' || !socketRef.current) return
 
     const sendInput = () => {
+      // Don't send input if player is dying or evolution tree is open
+      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+      if (localPlayer?.isDying || showEvolutionTree) {
+        // Send zero input to stop movement
+        socketRef.current?.emit('input', { up: false, down: false, left: false, right: false })
+        return
+      }
+
       const input = {
         up: keysRef.current.w,
         down: keysRef.current.s,
@@ -2214,7 +2668,7 @@ function App() {
     return () => {
       clearInterval(inputInterval)
     }
-  }, [gameState])
+  }, [gameState, showEvolutionTree])
 
   // Rendering loop for playing state
   useEffect(() => {
@@ -2427,6 +2881,9 @@ function App() {
         const sizeMultiplier = getSizeMultiplier(baseScoreForSize)
         const scaledSize = PLAYER_SIZE * sizeMultiplier
 
+        // Ghost mode makes player semi-transparent
+        const opacity = (player.abilityActive && player.spikeType === 'Thorn') ? 0.4 : 1
+
         drawSpike(
           ctx,
           player.x,
@@ -2441,7 +2898,224 @@ function App() {
           player.deathProgress || 0, // Use server-provided death progress
           true, // Skip username in first pass (draw in second pass)
           player.isAI ?? false,
+          player.spikeType || 'Spike', // Pass spike type for visual variation
+          opacity, // Ghost mode opacity
         )
+
+        // Draw ability visual effects
+        if (player.abilityActive && player.spikeType) {
+          ctx.save()
+
+          switch (player.spikeType) {
+            case 'Prickle': // Super Density - pulsing orange shield
+              const densityPulse = 0.7 + Math.sin(Date.now() * 0.008) * 0.3
+
+              // Outer shield layer
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.5, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 140, 0, ${densityPulse * 0.6})`
+              ctx.lineWidth = 6
+              ctx.stroke()
+
+              // Middle shield layer
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.35, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 170, 0, ${densityPulse * 0.8})`
+              ctx.lineWidth = 4
+              ctx.stroke()
+
+              // Inner glow
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.2, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 200, 100, ${densityPulse * 0.5})`
+              ctx.lineWidth = 2
+              ctx.stroke()
+              break
+
+            case 'Thorn': // Ghost Mode - ethereal glow
+              // Pulsing ghostly aura
+              const ghostPulse = 0.5 + Math.sin(Date.now() * 0.005) * 0.3
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.5, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(150, 200, 255, ${ghostPulse * 0.6})`
+              ctx.lineWidth = 6
+              ctx.stroke()
+
+              // Inner glow
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.2, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(200, 220, 255, ${ghostPulse * 0.4})`
+              ctx.lineWidth = 3
+              ctx.stroke()
+              break
+
+            case 'Bristle': // Double Speed - intense speed aura
+              // Pulsing speed rings
+              const speedPulse = Date.now() * 0.01
+              for (let ring = 0; ring < 3; ring++) {
+                const ringOffset = (speedPulse + ring * 0.5) % 1.5
+                const ringRadius = scaledSize * (1.2 + ringOffset * 0.8)
+                const ringOpacity = Math.max(0, 1 - ringOffset / 1.5)
+
+                ctx.beginPath()
+                ctx.arc(player.x, player.y, ringRadius, 0, Math.PI * 2)
+                ctx.strokeStyle = `rgba(0, 255, 255, ${ringOpacity * 0.6})`
+                ctx.lineWidth = 4
+                ctx.stroke()
+              }
+
+              // Speed streaks
+              for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2
+                const length = scaledSize * 1.8
+                const startX = player.x + Math.cos(angle) * scaledSize * 0.8
+                const startY = player.y + Math.sin(angle) * scaledSize * 0.8
+                const endX = startX + Math.cos(angle) * length
+                const endY = startY + Math.sin(angle) * length
+
+                const grad = ctx.createLinearGradient(startX, startY, endX, endY)
+                grad.addColorStop(0, 'rgba(0, 255, 255, 0.8)')
+                grad.addColorStop(1, 'rgba(0, 255, 255, 0)')
+
+                ctx.strokeStyle = grad
+                ctx.lineWidth = 2
+                ctx.lineCap = 'round'
+                ctx.beginPath()
+                ctx.moveTo(startX, startY)
+                ctx.lineTo(endX, endY)
+                ctx.stroke()
+              }
+              break
+
+            case 'Bulwark': // Invincibility - radiant golden shield
+              const invincPulse = 0.8 + Math.sin(Date.now() * 0.01) * 0.2
+
+              // Outer radiant layer
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.7, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 215, 0, ${invincPulse * 0.7})`
+              ctx.lineWidth = 8
+              ctx.stroke()
+
+              // Middle golden layer
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.5, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 230, 50, ${invincPulse * 0.9})`
+              ctx.lineWidth = 5
+              ctx.stroke()
+
+              // Inner bright glow
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.3, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 255, 150, ${invincPulse * 0.6})`
+              ctx.lineWidth = 3
+              ctx.stroke()
+
+              // Rotating hexagon shield pattern
+              ctx.save()
+              ctx.translate(player.x, player.y)
+              ctx.rotate(Date.now() * 0.002)
+              ctx.beginPath()
+              for (let i = 0; i < 6; i++) {
+                const angle = (i / 6) * Math.PI * 2
+                const x = Math.cos(angle) * scaledSize * 1.6
+                const y = Math.sin(angle) * scaledSize * 1.6
+                if (i === 0) ctx.moveTo(x, y)
+                else ctx.lineTo(x, y)
+              }
+              ctx.closePath()
+              ctx.strokeStyle = `rgba(255, 215, 0, ${invincPulse * 0.5})`
+              ctx.lineWidth = 3
+              ctx.stroke()
+              ctx.restore()
+              break
+
+            case 'Starflare': // Teleportation - cosmic energy
+              const starTime = Date.now() * 0.005
+
+              // Orbiting star particles
+              for (let orbit = 0; orbit < 2; orbit++) {
+                const orbitRadius = scaledSize * (1.4 + orbit * 0.4)
+                const particleCount = 8 + orbit * 4
+                for (let i = 0; i < particleCount; i++) {
+                  const angle = (i / particleCount) * Math.PI * 2 + starTime * (orbit % 2 === 0 ? 1 : -1)
+                  const x = player.x + Math.cos(angle) * orbitRadius
+                  const y = player.y + Math.sin(angle) * orbitRadius
+
+                  // Star glow
+                  const starGrad = ctx.createRadialGradient(x, y, 0, x, y, 6)
+                  starGrad.addColorStop(0, 'rgba(255, 230, 100, 0.9)')
+                  starGrad.addColorStop(1, 'rgba(255, 200, 50, 0)')
+                  ctx.fillStyle = starGrad
+                  ctx.beginPath()
+                  ctx.arc(x, y, 6, 0, Math.PI * 2)
+                  ctx.fill()
+
+                  // Star core
+                  ctx.fillStyle = 'rgba(255, 255, 200, 1)'
+                  ctx.beginPath()
+                  ctx.arc(x, y, 2, 0, Math.PI * 2)
+                  ctx.fill()
+                }
+              }
+
+              // Central cosmic glow
+              const cosmicGrad = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, scaledSize * 1.8)
+              cosmicGrad.addColorStop(0, 'rgba(255, 230, 150, 0.3)')
+              cosmicGrad.addColorStop(0.5, 'rgba(200, 150, 255, 0.2)')
+              cosmicGrad.addColorStop(1, 'rgba(100, 100, 255, 0)')
+              ctx.fillStyle = cosmicGrad
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.8, 0, Math.PI * 2)
+              ctx.fill()
+              break
+
+            case 'Mauler': // Fortress - aggressive red barrier
+              const fortressPulse = 0.6 + Math.sin(Date.now() * 0.012) * 0.4
+
+              // Outer aggressive barrier
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.8, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 50, 50, ${fortressPulse * 0.8})`
+              ctx.lineWidth = 8
+              ctx.stroke()
+
+              // Middle fortress layer
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.6, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(220, 30, 30, ${fortressPulse * 0.9})`
+              ctx.lineWidth = 6
+              ctx.stroke()
+
+              // Inner danger zone
+              ctx.beginPath()
+              ctx.arc(player.x, player.y, scaledSize * 1.4, 0, Math.PI * 2)
+              ctx.strokeStyle = `rgba(255, 100, 100, ${fortressPulse * 0.6})`
+              ctx.lineWidth = 4
+              ctx.stroke()
+
+              // Rotating danger spikes
+              ctx.save()
+              ctx.translate(player.x, player.y)
+              ctx.rotate(Date.now() * 0.003)
+              for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2
+                const innerR = scaledSize * 1.5
+                const outerR = scaledSize * 1.9
+
+                ctx.beginPath()
+                ctx.moveTo(Math.cos(angle) * innerR, Math.sin(angle) * innerR)
+                ctx.lineTo(Math.cos(angle) * outerR, Math.sin(angle) * outerR)
+                ctx.strokeStyle = `rgba(255, 80, 80, ${fortressPulse * 0.7})`
+                ctx.lineWidth = 3
+                ctx.stroke()
+              }
+              ctx.restore()
+              break
+          }
+
+          ctx.restore()
+        }
       })
 
       // Second pass: Draw all player usernames on top
@@ -2515,6 +3189,7 @@ function App() {
       if (localPlayer) {
         drawCollisionEffects(ctx, collisionEffectsRef.current)
         drawBoostEffects(ctx, boostEffectsRef.current)
+        drawEvolutionEffects(ctx, evolutionEffectsRef.current)
         drawCollisionParticles(ctx, collisionParticlesRef.current)
         drawScorePopups(ctx, scorePopupsRef.current)
         drawDamagePopups(ctx, damagePopupsRef.current)
@@ -2634,6 +3309,11 @@ function App() {
     setDeathStats(null)
     setDeathAnimationProgress(0)
 
+    // Reset evolution state
+    setHasEvolved(false)
+    setShowEvolutionTree(false)
+    setCurrentSpikeType('Spike')
+
     // Request respawn from server
     if (socketRef.current) {
       socketRef.current.emit('respawn', displayName)
@@ -2666,6 +3346,48 @@ function App() {
 
   const handleSpeedBoostClick = () => {
     triggerSpeedBoost()
+  }
+
+  const triggerAbility = () => {
+    if (gameState !== 'playing') return
+    if (!socketRef.current) return
+
+    const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+    if (!localPlayer || !localPlayer.spikeType || localPlayer.spikeType === 'Spike') return
+
+    // Check if ability is on cooldown
+    if (abilityOnCooldown) {
+      // Show notification
+      const abilityConfig = EVOLUTION_OPTIONS.find(opt => opt.type === currentSpikeType)
+      const abilityName = abilityConfig?.ability || 'Ability'
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: `${abilityName.toUpperCase()} ON COOLDOWN`,
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+      return
+    }
+
+    // Double Speed (Bristle) can only be used while moving
+    if (currentSpikeType === 'Bristle') {
+      const isMoving = keysRef.current.w || keysRef.current.a || keysRef.current.s || keysRef.current.d
+      if (!isMoving) {
+        notificationsRef.current.push({
+          id: Math.random().toString(36).substring(2, 11),
+          message: 'MUST BE MOVING TO USE DOUBLE SPEED',
+          timestamp: Date.now(),
+          opacity: 1,
+        })
+        return
+      }
+    }
+
+    socketRef.current.emit('useAbility')
+  }
+
+  const handleAbilityClick = () => {
+    triggerAbility()
   }
 
   const sendChatMessage = () => {
@@ -2803,6 +3525,40 @@ function App() {
         </button>
       )}
 
+      {gameState === 'playing' && hasEvolved && (() => {
+        const abilityConfig = EVOLUTION_OPTIONS.find(opt => opt.type === currentSpikeType)
+        const abilityName = abilityConfig?.ability || 'Ability'
+
+        return (
+          <button
+            className={`ability-button ${abilityOnCooldown ? 'cooldown' : ''}`}
+            onClick={handleAbilityClick}
+            aria-label={`${abilityName} (N)`}
+            style={{
+              '--ability-cooldown': abilityConfig ? `${abilityConfig.abilityCooldown}ms` : '20s'
+            } as React.CSSProperties}
+          >
+            {abilityOnCooldown && <span className="ability-fill-bar" />}
+            <svg className="ability-icon" viewBox="0 0 24 24">
+              <defs>
+                <linearGradient id="abilityGradient" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#ffaa00" />
+                  <stop offset="100%" stopColor="#ff6600" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M12 2 L15 9 L22 10 L17 15 L18 22 L12 18 L6 22 L7 15 L2 10 L9 9 Z"
+                fill="url(#abilityGradient)"
+                stroke="#ffffff"
+                strokeWidth="1.2"
+              />
+            </svg>
+            <span className="ability-label">{abilityName}</span>
+            <span className="ability-key">N</span>
+          </button>
+        )
+      })()}
+
       {gameState === 'playing' && isChatOpen && (
         <div className="chat-panel">
           <div className="chat-header">
@@ -2904,6 +3660,44 @@ function App() {
           <div className="connecting-container">
             <div className="spinner"></div>
             <h2 className="connecting-text">Connecting...</h2>
+          </div>
+        </div>
+      )}
+
+      {gameState === 'playing' && showEvolutionTree && (
+        <div className="evolution-screen">
+          <div className="evolution-content">
+            <h1 className="evolution-title">Choose Your Evolution</h1>
+            <p className="evolution-subtitle">Select your Tier 1 upgrade</p>
+
+            <div className="evolution-grid">
+              {EVOLUTION_OPTIONS.map((option) => (
+                <EvolutionOption
+                  key={option.type}
+                  option={option}
+                  onSelect={() => {
+                    if (socketRef.current) {
+                      socketRef.current.emit('evolve', option.type)
+                      setShowEvolutionTree(false)
+                      setHasEvolved(true)
+                      setCurrentSpikeType(option.type)
+
+                      // Add evolution effect at player position
+                      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+                      if (localPlayer) {
+                        evolutionEffectsRef.current.push({
+                          x: localPlayer.x,
+                          y: localPlayer.y,
+                          startTime: Date.now(),
+                          duration: 2000,
+                          spikeType: option.type,
+                        })
+                      }
+                    }
+                  }}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}

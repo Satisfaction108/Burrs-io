@@ -50,6 +50,17 @@ const AI_CONFIG = {
   SPEED_FACTOR: 0.85,         // Slightly slower than players
 };
 
+// Evolution configuration
+const EVOLUTION_THRESHOLD = 5000;
+const EVOLUTION_CONFIG = {
+  Prickle: { speed: 0.9, damage: 1.2, health: 1.0, abilityCooldown: 20000, abilityDuration: 2000 },
+  Thorn: { speed: 1.0, damage: 1.15, health: 0.9, abilityCooldown: 30000, abilityDuration: 3000 },
+  Bristle: { speed: 1.2, damage: 1.0, health: 1.0, abilityCooldown: 30000, abilityDuration: 3000 },
+  Bulwark: { speed: 0.7, damage: 1.05, health: 1.2, abilityCooldown: 30000, abilityDuration: 3000 },
+  Starflare: { speed: 1.0, damage: 1.15, health: 0.9, abilityCooldown: 180000, abilityDuration: 3000 },
+  Mauler: { speed: 1.0, damage: 1.05, health: 1.05, abilityCooldown: 60000, abilityDuration: 3000 },
+};
+
 // Team configuration for main team mode
 const TEAM_BASE_SIZE = 700;
 const TEAM_BASE_MARGIN = 400;
@@ -430,6 +441,12 @@ io.on('connection', (socket) => {
       },
       isAI: false,
       teamId: team.id,
+      // Evolution properties
+      spikeType: 'Spike', // Default spike type
+      hasEvolved: false, // Track if player has evolved
+      lastAbilityTime: 0, // Track last time ability was used
+      abilityActive: false, // Track if ability is currently active
+      abilityProgress: 0, // Track ability animation progress (0 to 1)
     };
 
     players.set(socket.id, player);
@@ -590,6 +607,127 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Debug command: Set score to specific value
+  socket.on('debugSetScore', (targetScore) => {
+    const player = players.get(socket.id);
+    if (!player || player.isDying) return;
+
+    // Validate score is a number
+    if (typeof targetScore === 'number' && targetScore >= 0) {
+      player.score = targetScore;
+    }
+  });
+
+  // Handle evolution selection
+  socket.on('evolve', (spikeType) => {
+    const player = players.get(socket.id);
+    if (!player || player.isDying) return;
+
+    // Validate spike type and that player hasn't evolved yet
+    if (!player.hasEvolved && EVOLUTION_CONFIG[spikeType] && player.score >= EVOLUTION_THRESHOLD) {
+      player.spikeType = spikeType;
+      player.hasEvolved = true;
+
+      // Apply stat multipliers to player
+      const config = EVOLUTION_CONFIG[spikeType];
+
+      // Adjust max HP based on health multiplier
+      const oldMaxHP = player.maxHP;
+      player.maxHP = Math.floor(oldMaxHP * config.health);
+
+      // Scale current HP proportionally
+      const hpRatio = player.currentHP / oldMaxHP;
+      player.currentHP = Math.floor(player.maxHP * hpRatio);
+
+      // Speed and damage multipliers will be applied in movement and collision calculations
+    }
+  });
+
+  // Handle ability usage
+  socket.on('useAbility', () => {
+    const player = players.get(socket.id);
+    if (!player || player.isDying) return;
+
+    // Check if player has evolved
+    if (!player.hasEvolved || !player.spikeType || player.spikeType === 'Spike') return;
+
+    const config = EVOLUTION_CONFIG[player.spikeType];
+    if (!config) return;
+
+    const now = Date.now();
+    const cooldown = config.abilityCooldown;
+
+    // Check cooldown
+    if (now - player.lastAbilityTime < cooldown) {
+      socket.emit('abilityError', {
+        message: 'Ability is on cooldown.'
+      });
+      return;
+    }
+
+    // Double Speed (Bristle) can only be used while moving
+    if (player.spikeType === 'Bristle') {
+      const isMoving = player.inputs.up || player.inputs.down || player.inputs.left || player.inputs.right;
+      if (!isMoving) {
+        socket.emit('abilityError', {
+          message: 'Must be moving to use Double Speed.'
+        });
+        return;
+      }
+    }
+
+    // Activate ability based on spike type
+    player.lastAbilityTime = now;
+    player.abilityActive = true;
+    player.abilityProgress = 0;
+
+    // Notify client that ability was successfully used
+    socket.emit('abilityUsed', {
+      cooldownMs: cooldown,
+      usedAt: now,
+      duration: config.abilityDuration,
+      abilityType: player.spikeType,
+    });
+
+    // Handle specific ability effects
+    switch (player.spikeType) {
+      case 'Prickle': // Super Density - orange shield visual
+        // Effect handled in collision detection
+        break;
+      case 'Thorn': // Ghost Mode - pass through spikes
+        // Effect handled in collision detection
+        break;
+      case 'Bristle': // Double Speed
+        // Effect handled in movement calculation
+        break;
+      case 'Bulwark': // Invincibility
+        // Effect handled in collision detection
+        break;
+      case 'Starflare': // Teleportation to base
+        const team = TEAMS.find(t => t.id === player.teamId);
+        if (team) {
+          const base = team.base;
+          const padding = 100;
+          player.x = base.x + padding + Math.random() * (base.width - padding * 2);
+          player.y = base.y + padding + Math.random() * (base.height - padding * 2);
+          player.vx = 0;
+          player.vy = 0;
+        }
+        break;
+      case 'Mauler': // Fortress - defense shield
+        // Effect handled in collision detection
+        break;
+    }
+
+    // Schedule ability deactivation
+    setTimeout(() => {
+      if (players.has(socket.id)) {
+        const p = players.get(socket.id);
+        p.abilityActive = false;
+        p.abilityProgress = 0;
+      }
+    }, config.abilityDuration);
+  });
 
   // Handle respawn request
   socket.on('respawn', (username) => {
@@ -646,6 +784,12 @@ io.on('connection', (socket) => {
       },
       isAI: false,
       teamId: team.id,
+      // Evolution properties (reset on respawn)
+      spikeType: 'Spike',
+      hasEvolved: false,
+      lastAbilityTime: 0,
+      abilityActive: false,
+      abilityProgress: 0,
     };
 
     players.set(socket.id, player);
@@ -725,6 +869,14 @@ function gameLoop() {
     // AI hunters are slightly slower than players
     if (player.isAI) {
       speedMultiplier *= AI_CONFIG.SPEED_FACTOR || 0.85;
+    }
+    // Apply evolution speed multiplier
+    if (player.spikeType && EVOLUTION_CONFIG[player.spikeType]) {
+      speedMultiplier *= EVOLUTION_CONFIG[player.spikeType].speed;
+    }
+    // Bristle: Double Speed ability
+    if (player.abilityActive && player.spikeType === 'Bristle') {
+      speedMultiplier *= 2;
     }
     const adjustedSpeed = GAME_CONFIG.PLAYER_SPEED * speedMultiplier;
 
@@ -1072,6 +1224,15 @@ function gameLoop() {
         // Collision detected!
         const currentTime = Date.now();
 
+        // Check for Ghost Mode ability (Thorn) - pass through spikes
+        const player1GhostMode = player1.abilityActive && player1.spikeType === 'Thorn';
+        const player2GhostMode = player2.abilityActive && player2.spikeType === 'Thorn';
+
+        // If either player has ghost mode, skip collision entirely
+        if (player1GhostMode || player2GhostMode) {
+          continue;
+        }
+
         // Apply bounce/push-back effect
         // Calculate normalized direction vector from player1 to player2
         let nx = dx;
@@ -1097,7 +1258,16 @@ function gameLoop() {
         player2.y += ny * separationPerPlayer;
 
         // Velocity-based knockback – creates a smooth push over a few frames
-        const baseImpulse = 4; // tuned for noticeable push at current speeds
+        let baseImpulse = 4; // tuned for noticeable push at current speeds
+
+        // Mauler: Fortress ability - 3x knockback
+        if (player1.abilityActive && player1.spikeType === 'Mauler') {
+          baseImpulse *= 3;
+        }
+        if (player2.abilityActive && player2.spikeType === 'Mauler') {
+          baseImpulse *= 3;
+        }
+
         const depthFactor = Math.min(overlap / (GAME_CONFIG.PLAYER_SIZE * 0.8), 2); // 0..2
         const impulseStrength = baseImpulse * (1 + 0.5 * depthFactor);
 
@@ -1131,14 +1301,40 @@ function gameLoop() {
 
           // Momentum-based damage scaling
           // At 0 speed -> 0.5x base damage, at max speed -> 2x base damage
-          const factor1 = 0.5 + speedNorm1 * 1.5;
-          const factor2 = 0.5 + speedNorm2 * 1.5;
+          let factor1 = 0.5 + speedNorm1 * 1.5;
+          let factor2 = 0.5 + speedNorm2 * 1.5;
 
-          const damageFrom1To2 = Math.max(1, Math.round(baseDamageFrom1To2 * factor1));
-          const damageFrom2To1 = Math.max(1, Math.round(baseDamageFrom2To1 * factor2));
+          // Apply evolution damage multipliers
+          if (player1.spikeType && EVOLUTION_CONFIG[player1.spikeType]) {
+            factor1 *= EVOLUTION_CONFIG[player1.spikeType].damage;
+          }
+          if (player2.spikeType && EVOLUTION_CONFIG[player2.spikeType]) {
+            factor2 *= EVOLUTION_CONFIG[player2.spikeType].damage;
+          }
+
+          // Apply ability damage multipliers
+          // Prickle: Super Density - 2x damage dealt
+          if (player1.abilityActive && player1.spikeType === 'Prickle') {
+            factor1 *= 2;
+          }
+          if (player2.abilityActive && player2.spikeType === 'Prickle') {
+            factor2 *= 2;
+          }
+
+          // Mauler: Fortress - pushes opponents away (handled in knockback)
+          // Bulwark: Invincibility - no damage taken
+          const player1Invincible = player1.abilityActive && player1.spikeType === 'Bulwark';
+          const player2Invincible = player2.abilityActive && player2.spikeType === 'Bulwark';
+
+          let damageFrom1To2 = Math.max(1, Math.round(baseDamageFrom1To2 * factor1));
+          let damageFrom2To1 = Math.max(1, Math.round(baseDamageFrom2To1 * factor2));
+
+          // Invincibility negates all damage
+          if (player2Invincible) damageFrom1To2 = 0;
+          if (player1Invincible) damageFrom2To1 = 0;
 
           // Apply damage to both players and track damage dealt
-          if (canDamage2) {
+          if (canDamage2 && damageFrom1To2 > 0) {
             // Player2 receives damage based on player1's momentum
             player2.currentHP -= damageFrom1To2;
             player2.health = (player2.currentHP / player2.maxHP) * 100;
@@ -1151,7 +1347,7 @@ function gameLoop() {
             player2.damageDealt.set(player1.id, currentDamage + damageFrom1To2);
           }
 
-          if (canDamage1) {
+          if (canDamage1 && damageFrom2To1 > 0) {
             // Player1 receives damage based on player2's momentum
             player1.currentHP -= damageFrom2To1;
             player1.health = (player1.currentHP / player1.maxHP) * 100;
