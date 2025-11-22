@@ -2832,8 +2832,9 @@ function broadcastGameState() {
   if (players.size > 0) {
     io.emit('gameState', {
       players: Array.from(players.values()),
-      // Don't send food/premium orbs every tick - they're already sent on init and when collected
-      // This massively reduces bandwidth (was sending 2400 food orbs 60 times/second!)
+      // Premium orbs are few (20), so we can safely sync them every broadcast
+      // to keep fleeing movement smooth without heavy bandwidth cost.
+      premiumOrbs: Array.from(premiumOrbs.values()),
     });
   }
 }
