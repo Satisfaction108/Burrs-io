@@ -219,6 +219,7 @@ const GAME_CONFIG = {
   // Base max speed in world units per tick (~360 px/s at 60 FPS for small spikes)
   PLAYER_SPEED: 6,
   TICK_RATE: 60, // Server updates per second
+  BROADCAST_RATE: 30, // Broadcast to clients 30 times per second (reduced from 60 for performance)
   FOOD_COUNT: 2400, // Total food orbs on map (scaled for 8000x8000 map)
   PREMIUM_ORB_COUNT: 20, // Total premium orbs on map (scaled for 8000x8000 map)
   // Momentum-based movement configuration (tuned for ~2s ramp-up, smooth direction changes)
@@ -2818,21 +2819,36 @@ function gameLoop() {
     }
   });
 
-  // Broadcast game state to all clients
-  if (players.size > 0) {
-    io.emit('gameState', {
-      players: Array.from(players.values()),
-      food: Array.from(food.values()),
-      premiumOrbs: Array.from(premiumOrbs.values())
-    });
-  }
-
   // Update global player count for status endpoint (exclude AI players)
   global.playerCount = Array.from(players.values()).filter(p => !p.isAI).length;
 }
 
-// Start game loop
-const gameLoopInterval = setInterval(gameLoop, 1000 / GAME_CONFIG.TICK_RATE);
+// Broadcast counter - only broadcast every N ticks to reduce network load
+let broadcastCounter = 0;
+const BROADCAST_INTERVAL = Math.floor(GAME_CONFIG.TICK_RATE / GAME_CONFIG.BROADCAST_RATE);
+
+// Broadcast game state to clients at reduced rate
+function broadcastGameState() {
+  if (players.size > 0) {
+    io.emit('gameState', {
+      players: Array.from(players.values()),
+      // Don't send food/premium orbs every tick - they're already sent on init and when collected
+      // This massively reduces bandwidth (was sending 2400 food orbs 60 times/second!)
+    });
+  }
+}
+
+// Start game loop at 60 ticks/second for physics
+const gameLoopInterval = setInterval(() => {
+  gameLoop();
+
+  // Only broadcast to clients at reduced rate (30 times/second instead of 60)
+  broadcastCounter++;
+  if (broadcastCounter >= BROADCAST_INTERVAL) {
+    broadcastGameState();
+    broadcastCounter = 0;
+  }
+}, 1000 / GAME_CONFIG.TICK_RATE);
 
 // Start server
 httpServer.listen(PORT, () => {

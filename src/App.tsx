@@ -3029,7 +3029,7 @@ function App() {
       premiumOrbsRef.current = data.premiumOrbs || []
     })
 
-    socket.on('gameState', (data: { players: Player[]; food: Food[]; premiumOrbs: PremiumOrb[] }) => {
+    socket.on('gameState', (data: { players: Player[] }) => {
       // Rebuild players and scores maps from the latest server snapshot
       const newPlayers = new Map<string, Player>()
       const newScores = new Map<string, number>()
@@ -3042,13 +3042,11 @@ function App() {
       playersRef.current = newPlayers
       playerScoresRef.current = newScores
 
-      // Update food from server
-      foodRef.current = data.food || []
-
-      // Update premium orbs from server
-      premiumOrbsRef.current = data.premiumOrbs || []
-
-
+      // Food and premium orbs are NOT updated here anymore (performance optimization)
+      // They are only updated via:
+      // 1. 'init' event (when joining/respawning)
+      // 2. 'foodCollected' event (when food is eaten and new food spawns)
+      // 3. 'premiumOrbCollected' event (when premium orb is collected and new orb spawns)
     })
 
     socket.on('playerJoined', (player: Player) => {
