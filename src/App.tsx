@@ -3580,7 +3580,7 @@ function App() {
     })
 
     // Handle AFK activation started
-    socket.on('afkActivationStarted', (data: { duration: number }) => {
+    socket.on('afkActivationStarted', () => {
       notificationsRef.current.push({
         id: Math.random().toString(36).substring(2, 11),
         message: 'STAY STILL FOR 10 SECONDS TO GO AFK...',
@@ -4851,7 +4851,7 @@ function App() {
     }
   }
 
-  const handlePurchaseCustomization = async (customizationId: string, price: number) => {
+  const handlePurchaseCustomization = async (customizationId: string) => {
     try {
       const token = localStorage.getItem('authToken')
       if (!token) return
@@ -5979,7 +5979,7 @@ function App() {
                             if (canAfford) {
                               hapticManager.trigger('medium')
                               audioManager.playSFX('uiClick')
-                              handlePurchaseCustomization(item.id, item.price)
+                              handlePurchaseCustomization(item.id)
                             }
                           }}
                           disabled={!canAfford}
@@ -6057,7 +6057,7 @@ function App() {
                             if (canAfford) {
                               hapticManager.trigger('medium')
                               audioManager.playSFX('uiClick')
-                              handlePurchaseCustomization(item.id, item.price)
+                              handlePurchaseCustomization(item.id)
                             }
                           }}
                           disabled={!canAfford}
