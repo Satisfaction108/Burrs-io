@@ -1112,30 +1112,30 @@ const drawSpike = (
   }
 }
 
-// Draw food orb with glow effect
-const drawFood = (ctx: CanvasRenderingContext2D, food: Food) => {
+// Draw food orb with glow effect (optimized)
+const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number) => {
   ctx.save()
 
   // Calculate opacity based on absorption progress
   const opacity = food.absorbing ? 1 - (food.absorbProgress || 0) : 1
 
   // Pulsing glow effect (lightweight for performance)
-  const time = Date.now() / 1000
+  // Use pre-calculated time to avoid repeated Date.now() calls
   const pulsePhase = (food.x + food.y) * 0.01 // Unique phase per orb based on position
-  const pulse = 0.7 + Math.sin(time * 2 + pulsePhase) * 0.3 // Oscillates between 0.4 and 1.0
+  const pulse = 0.7 + Math.sin(currentTime * 2 + pulsePhase) * 0.3 // Oscillates between 0.4 and 1.0
 
   // Floating animation - slow vertical movement
-  const floatOffset = Math.sin(time * 1.5 + pulsePhase) * 3 // ±3 pixels vertical float
+  const floatOffset = Math.sin(currentTime * 1.5 + pulsePhase) * 3 // ±3 pixels vertical float
   const currentY = food.y + floatOffset
 
-  // Draw orb with single, efficient glow pass
+  // Draw orb with optimized glow (reduced blur for better performance)
   ctx.globalAlpha = opacity
   ctx.beginPath()
   ctx.arc(food.x, currentY, food.size, 0, Math.PI * 2)
   ctx.fillStyle = food.color
   ctx.shadowColor = food.color
-  // Slightly pulsing blur but not too large to avoid lag
-  ctx.shadowBlur = food.size * (1.2 + 0.6 * pulse)
+  // Reduced blur intensity for better performance while maintaining visual quality
+  ctx.shadowBlur = food.size * (0.8 + 0.4 * pulse)
   ctx.fill()
 
   ctx.restore()
@@ -1144,8 +1144,8 @@ const drawFood = (ctx: CanvasRenderingContext2D, food: Food) => {
 // Generate random premium orb
 // Premium orb generation is now handled server-side
 
-// Draw premium orb with enhanced particle effects
-const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb) => {
+// Draw premium orb with enhanced particle effects (optimized)
+const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentTime: number) => {
   ctx.save()
 
   // Calculate opacity and size based on absorption progress
@@ -1154,14 +1154,13 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb) => {
 
   ctx.globalAlpha = opacity
 
-  // Pulsing glow effect for premium orbs
-  const time = Date.now() / 1000
+  // Pulsing glow effect for premium orbs (use pre-calculated time)
   const pulsePhase = (orb.x + orb.y) * 0.01
-  const pulse = 0.6 + Math.sin(time * 2.5 + pulsePhase) * 0.4 // Stronger pulse for premium
+  const pulse = 0.6 + Math.sin(currentTime * 2.5 + pulsePhase) * 0.4 // Stronger pulse for premium
 
   // Floating animation - slow circular movement
-  const floatX = Math.sin(time * 1.2 + pulsePhase) * 4
-  const floatY = Math.cos(time * 1.2 + pulsePhase) * 4
+  const floatX = Math.sin(currentTime * 1.2 + pulsePhase) * 4
+  const floatY = Math.cos(currentTime * 1.2 + pulsePhase) * 4
 
   // Move to orb position (absorption animation or floating)
   const currentX = orb.absorbing
@@ -1178,13 +1177,13 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb) => {
 
     ctx.save()
     ctx.shadowColor = orb.color
-    ctx.shadowBlur = 8 * pulse
+    ctx.shadowBlur = 6 * pulse // Reduced blur for better performance
 
     for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 2 + time * 2
+      const angle = (i / particleCount) * Math.PI * 2 + currentTime * 2
       const px = currentX + Math.cos(angle) * orbitRadius
       const py = currentY + Math.sin(angle) * orbitRadius
-      const particleSize = 2.5 + Math.sin(time * 3 + i) * 1
+      const particleSize = 2.5 + Math.sin(currentTime * 3 + i) * 1
 
       ctx.globalAlpha = opacity * (0.6 + 0.4 * pulse)
       ctx.beginPath()
@@ -1199,9 +1198,9 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb) => {
   ctx.translate(currentX, currentY)
   ctx.rotate(orb.rotation)
 
-  // Enhanced pulsing glow effect (single pass)
+  // Enhanced pulsing glow effect (optimized blur)
   ctx.shadowColor = orb.color
-  ctx.shadowBlur = currentSize * (1.8 + 1.2 * pulse)
+  ctx.shadowBlur = currentSize * (1.2 + 0.8 * pulse) // Reduced blur for better performance
 
   // Draw octogon shape
   ctx.beginPath()
@@ -3062,6 +3061,10 @@ function App() {
       const prevScore = playerScoresRef.current.get(data.playerId) || 0
       const newScore = data.newScore
 
+      // Update food array: remove old food and add new food
+      foodRef.current = foodRef.current.filter(f => f.id !== data.foodId)
+      foodRef.current.push(data.newFood)
+
       // Show +X popup for the local player when they gain score from food
       if (data.playerId === localPlayerIdRef.current && newScore > prevScore) {
         const scoreDiff = newScore - prevScore
@@ -3088,6 +3091,24 @@ function App() {
             // Neon blue color for all +score popups
             color: '#00e5ff'
           })
+
+          // Enhanced particle burst effect for food collection
+          const particleCount = 8
+          const foodColor = data.newFood.color || '#00e5ff'
+          for (let i = 0; i < particleCount; i++) {
+            const angle = (i / particleCount) * Math.PI * 2
+            const speed = 2 + Math.random() * 3
+            collisionParticlesRef.current.push({
+              x: player.x,
+              y: player.y,
+              vx: Math.cos(angle) * speed,
+              vy: Math.sin(angle) * speed,
+              size: 2 + Math.random() * 2,
+              color: foodColor,
+              life: 20 + Math.random() * 15,
+              maxLife: 35
+            })
+          }
 
           // Play eat food sound effect
           audioManager.playSFX('eatFood')
@@ -3118,6 +3139,10 @@ function App() {
       const prevScore = playerScoresRef.current.get(data.playerId) || 0
       const newScore = data.newScore
 
+      // Update premium orbs array: remove old orb and add new orb
+      premiumOrbsRef.current = premiumOrbsRef.current.filter(o => o.id !== data.orbId)
+      premiumOrbsRef.current.push(data.newOrb)
+
       // Add notification and score popup if it's the local player
       if (data.playerId === localPlayerIdRef.current && newScore > prevScore) {
         const scoreDiff = newScore - prevScore
@@ -3144,6 +3169,24 @@ function App() {
             // Neon blue color for all +score popups
             color: '#00e5ff'
           })
+
+          // Enhanced particle burst effect for premium orb collection (more particles, brighter)
+          const particleCount = 16
+          const orbColor = '#dd00ff' // Premium orb neon purple/magenta
+          for (let i = 0; i < particleCount; i++) {
+            const angle = (i / particleCount) * Math.PI * 2
+            const speed = 3 + Math.random() * 4
+            collisionParticlesRef.current.push({
+              x: player.x,
+              y: player.y,
+              vx: Math.cos(angle) * speed,
+              vy: Math.sin(angle) * speed,
+              size: 3 + Math.random() * 3,
+              color: orbColor,
+              life: 30 + Math.random() * 20,
+              maxLife: 50
+            })
+          }
         }
 
         // Premium orb notification banner
@@ -3695,6 +3738,9 @@ function App() {
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
+      // Cache current time for performance (avoid repeated Date.now() calls)
+      const currentTime = Date.now() / 1000
+
       // Get local player for camera
       const localPlayer = localPlayerIdRef.current
         ? playersRef.current.get(localPlayerIdRef.current)
@@ -3721,9 +3767,9 @@ function App() {
       let cameraY = cameraRef.current.y
 
       // Update screen shake
-      const currentTime = Date.now()
+      const currentTimeMs = Date.now()
       if (screenShakeRef.current.intensity > 0) {
-        const elapsed = currentTime - screenShakeRef.current.startTime
+        const elapsed = currentTimeMs - screenShakeRef.current.startTime
         if (elapsed < screenShakeRef.current.duration) {
           const progress = elapsed / screenShakeRef.current.duration
           const intensity = screenShakeRef.current.intensity * (1 - progress)
@@ -3859,14 +3905,14 @@ function App() {
         })
       }
 
-      // Draw all food orbs
+      // Draw all food orbs (pass currentTime for optimized animations)
       foodRef.current.forEach((food) => {
-        drawFood(ctx, food)
+        drawFood(ctx, food, currentTime)
       })
 
-      // Draw all premium orbs
+      // Draw all premium orbs (pass currentTime for optimized animations)
       premiumOrbsRef.current.forEach((orb) => {
-        drawPremiumOrb(ctx, orb)
+        drawPremiumOrb(ctx, orb, currentTime)
       })
 
       // Eating animation is now handled server-side
