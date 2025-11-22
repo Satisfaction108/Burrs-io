@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Start the multiplayer spike game
+# Start the multiplayer burr game
 # This script starts both the game server and the client
 
-echo "Starting Rammer.io Multiplayer Game..."
+echo "Starting burrs.io Multiplayer Game..."
 echo ""
 
 # Check if dependencies are installed
@@ -32,7 +32,7 @@ CLIENT_PID=$!
 
 echo ""
 echo "=========================================="
-echo "Rammer.io is running!"
+echo "burrs.io is running!"
 echo "=========================================="
 echo "Game Server: http://localhost:5174"
 echo "Client: http://localhost:5173"

@@ -1,18 +1,91 @@
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
+import customizationsRoutes from './routes/customizations.js';
+import gameRoutes from './routes/game.js';
+
+dotenv.config();
 
 const PORT = process.env.PORT || 5174;
 
+// Create Express app
+const app = express();
+
+// Middleware
+app.use(cors({
+  origin: [
+    "https://burrs-io-client.onrender.com",
+    "http://localhost:5173",
+    "http://localhost:5174"
+  ],
+  credentials: true
+}));
+app.use(express.json());
+
+// API routes
+app.use('/api/auth', authRoutes);
+app.use('/api/customizations', customizationsRoutes);
+app.use('/api/game', gameRoutes);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Simple profanity filter - list of common inappropriate words
+const profanityList = [
+  'fuck', 'shit', 'ass', 'bitch', 'damn', 'hell', 'crap', 'piss', 'dick', 'cock',
+  'pussy', 'fag', 'slut', 'whore', 'bastard', 'cunt', 'nigger', 'nigga', 'retard',
+  'rape', 'sex', 'porn', 'xxx', 'anal', 'cum', 'jizz', 'tits', 'boobs', 'penis',
+  'vagina', 'dildo', 'viagra', 'nazi', 'hitler', 'kys', 'kill yourself'
+];
+
+// Check if text contains profanity (case-insensitive, partial matching)
+function isProfane(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lowerText = text.toLowerCase();
+  return profanityList.some(word => lowerText.includes(word));
+}
+
+// Reconnection system configuration
+const RECONNECTION_TIMEOUT_MS = 60000; // 60 seconds to reconnect
+// Store disconnected player data temporarily. Keyed by IP address OR user ID
+// so reconnection works even if the player reloads the page or changes their name.
+const disconnectedPlayers = new Map(); // IP or userId -> { player, disconnectTime, timeoutId, reconnectionKey }
+const ipToSocketId = new Map(); // IP -> current socket.id
+const userIdToSocketId = new Map(); // userId -> current socket.id
+
+// Helper to get client IP address from socket
+function getClientIP(socket) {
+  // Try to get IP from various sources (handles proxies, load balancers, etc.)
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (forwarded) {
+    // x-forwarded-for can contain multiple IPs, take the first one
+    return forwarded.split(',')[0].trim();
+  }
+  return socket.handshake.address || socket.conn.remoteAddress || 'unknown';
+}
+
+// Chat timeout system
+const chatTimeouts = new Map(); // Track players who are timed out from chat
+
+// AFK system configuration
+const AFK_ACTIVATION_TIME_MS = 10000; // 10 seconds stationary in base to activate AFK
+const afkActivationTimers = new Map(); // Track AFK activation timers
+
 // Game configuration
 const GAME_CONFIG = {
-  MAP_WIDTH: 4000,
-  MAP_HEIGHT: 4000,
+  MAP_WIDTH: 8000,
+  MAP_HEIGHT: 8000,
   PLAYER_SIZE: 30, // Base size for spikes
   // Base max speed in world units per tick (~360 px/s at 60 FPS for small spikes)
   PLAYER_SPEED: 6,
   TICK_RATE: 60, // Server updates per second
-  FOOD_COUNT: 500, // Total food orbs on map
-  PREMIUM_ORB_COUNT: 5, // Total premium orbs on map
+  FOOD_COUNT: 2400, // Total food orbs on map (scaled for 8000x8000 map)
+  PREMIUM_ORB_COUNT: 20, // Total premium orbs on map (scaled for 8000x8000 map)
   // Momentum-based movement configuration (tuned for ~2s ramp-up, smooth direction changes)
   ACCELERATION: 0.05,  // ~0 -> max speed in ~2 seconds
   DECELERATION: 0.05,  // ~max speed -> 0 in ~2 seconds when no input
@@ -22,6 +95,9 @@ const GAME_CONFIG = {
   BOOST_SPEED_MULTIPLIER: 2.2, // how much faster during boost
   BOOST_MAX_SPEED_FACTOR: 3.0, // cap relative to adjustedSpeed
   BOOST_MIN_SPEED_RATIO: 0.2, // must be at least 20% of base speed to trigger
+  // Premium orb fleeing configuration
+  PREMIUM_ORB_FLEE_DISTANCE: 350, // Distance at which premium orbs start fleeing
+  PREMIUM_ORB_FLEE_SPEED: 4, // Speed at which premium orbs flee (slower than player)
 };
 
 // Food tier configuration (matches client)
@@ -43,27 +119,59 @@ const PLAYER_BASE_FOV_RADIUS = 600;
 
 // AI-controlled spike configuration
 const AI_CONFIG = {
-  TARGET_COUNT: 6,            // Aim to keep ~6 AI entities in the world
-  BASE_SCORE: 500,            // Treat AI like a 500-score spike for HP/damage
+  TARGET_COUNT: 8,            // Aim to keep ~8 AI entities in the world
+  BASE_SCORE: 3000,           // Treat AI like a 3000-score spike for HP/damage (challenging but beatable)
   COLOR: '#00ff88',           // Unique neon green/teal body color for AI entities
   FOV_RADIUS: PLAYER_BASE_FOV_RADIUS * 1.5, // 1.5x normal spike FOV
-  SPEED_FACTOR: 0.85,         // Slightly slower than players
+  SPEED_FACTOR: 0.90,         // Slightly slower than players (10% reduction)
 };
 
 // Evolution configuration
 const EVOLUTION_THRESHOLD = 5000;
+const TIER_2_THRESHOLD = 15000;
 const EVOLUTION_CONFIG = {
-  Prickle: { speed: 0.9, damage: 1.2, health: 1.0, abilityCooldown: 20000, abilityDuration: 2000 },
-  Thorn: { speed: 1.0, damage: 1.15, health: 0.9, abilityCooldown: 30000, abilityDuration: 3000 },
-  Bristle: { speed: 1.2, damage: 1.0, health: 1.0, abilityCooldown: 30000, abilityDuration: 3000 },
-  Bulwark: { speed: 0.7, damage: 1.05, health: 1.2, abilityCooldown: 30000, abilityDuration: 3000 },
-  Starflare: { speed: 1.0, damage: 1.15, health: 0.9, abilityCooldown: 180000, abilityDuration: 3000 },
-  Mauler: { speed: 1.0, damage: 1.05, health: 1.05, abilityCooldown: 60000, abilityDuration: 3000 },
+  // Tier 1 - Unlocks at 5000 score
+  Prickle: { speed: 0.92, damage: 1.20, health: 1.05, abilityCooldown: 20000, abilityDuration: 2000 },
+  Thorn: { speed: 1.05, damage: 1.18, health: 0.92, abilityCooldown: 28000, abilityDuration: 3000 },
+  Bristle: { speed: 1.18, damage: 1.05, health: 1.00, abilityCooldown: 28000, abilityDuration: 3000 },
+  Bulwark: { speed: 0.82, damage: 1.08, health: 1.20, abilityCooldown: 28000, abilityDuration: 3000 },
+  Starflare: { speed: 1.05, damage: 1.15, health: 0.92, abilityCooldown: 120000, abilityDuration: 3000 },
+  Mauler: { speed: 1.00, damage: 1.10, health: 1.08, abilityCooldown: 50000, abilityDuration: 3000 },
+
+  // Tier 2 - Prickle variants (Unlocks at 15000 score)
+  PrickleVanguard: { speed: 0.96, damage: 1.25, health: 1.08, abilityCooldown: 18000, abilityDuration: 2500 },
+  PrickleSwarm: { speed: 1.00, damage: 1.28, health: 1.02, abilityCooldown: 17000, abilityDuration: 2000 },
+  PrickleBastion: { speed: 0.88, damage: 1.32, health: 1.12, abilityCooldown: 20000, abilityDuration: 2500 },
+
+  // Tier 2 - Thorn variants
+  ThornWraith: { speed: 1.08, damage: 1.22, health: 0.94, abilityCooldown: 25000, abilityDuration: 3500 },
+  ThornReaper: { speed: 1.08, damage: 1.28, health: 0.90, abilityCooldown: 24000, abilityDuration: 3000 },
+  ThornShade: { speed: 1.12, damage: 1.20, health: 0.94, abilityCooldown: 22000, abilityDuration: 2500 },
+
+  // Tier 2 - Bristle variants
+  BristleBlitz: { speed: 1.25, damage: 1.08, health: 1.02, abilityCooldown: 26000, abilityDuration: 3500 },
+  BristleStrider: { speed: 1.22, damage: 1.10, health: 1.05, abilityCooldown: 30000, abilityDuration: 4000 },
+  BristleSkirmisher: { speed: 1.22, damage: 1.05, health: 1.10, abilityCooldown: 26000, abilityDuration: 3000 },
+
+  // Tier 2 - Bulwark variants
+  BulwarkAegis: { speed: 0.85, damage: 1.12, health: 1.25, abilityCooldown: 30000, abilityDuration: 3500 },
+  BulwarkCitadel: { speed: 0.82, damage: 1.15, health: 1.30, abilityCooldown: 32000, abilityDuration: 3000 },
+  BulwarkJuggernaut: { speed: 0.85, damage: 1.18, health: 1.25, abilityCooldown: 30000, abilityDuration: 3000 },
+
+  // Tier 2 - Starflare variants
+  StarflarePulsar: { speed: 1.08, damage: 1.22, health: 0.94, abilityCooldown: 110000, abilityDuration: 3000 },
+  StarflareHorizon: { speed: 1.12, damage: 1.18, health: 0.96, abilityCooldown: 35000, abilityDuration: 2500 },
+  StarflareNova: { speed: 1.08, damage: 1.28, health: 0.92, abilityCooldown: 90000, abilityDuration: 2500 },
+
+  // Tier 2 - Mauler variants
+  MaulerRavager: { speed: 1.05, damage: 1.18, health: 1.10, abilityCooldown: 45000, abilityDuration: 3000 },
+  MaulerBulwark: { speed: 0.98, damage: 1.12, health: 1.18, abilityCooldown: 55000, abilityDuration: 3500 },
+  MaulerApex: { speed: 1.10, damage: 1.22, health: 1.08, abilityCooldown: 50000, abilityDuration: 4000 },
 };
 
-// Team configuration for main team mode
-const TEAM_BASE_SIZE = 700;
-const TEAM_BASE_MARGIN = 400;
+// Team configuration for main team mode (scaled for 8000x8000 map)
+const TEAM_BASE_SIZE = 1400;
+const TEAM_BASE_MARGIN = 800;
 
 const TEAMS = [
   {
@@ -146,19 +254,31 @@ function isCircleOverlappingBase(base, x, y, radius) {
 function isPlayerInsideAnyBase(player) {
   if (!player) return false;
   const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : (player.score || 0);
-  const radius = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(effectiveScore) * 1.29;
+  const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0);
+  const radius = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(effectiveScore, evolutionOffset) * 1.29;
   return TEAMS.some((team) => isCircleOverlappingBase(team.base, player.x, player.y, radius));
+}
+
+// Check if a player is inside their own team base (for AFK activation)
+function isPlayerInsideOwnBase(player) {
+  if (!player || player.isAI || !player.teamId) return false;
+  const team = TEAMS.find(t => t.id === player.teamId);
+  if (!team) return false;
+  return isPointInsideBase(team.base, player.x, player.y);
 }
 
 
 // Calculate size multiplier based on score (3x slower progression)
-function getSizeMultiplier(score) {
-  if (score < 3000) {
-    return 1 + (score / 3000);
-  } else if (score < 15000) {
-    return 2 + ((score - 3000) / 12000);
-  } else if (score < 75000) {
-    return 3 + ((score - 15000) / 60000);
+function getSizeMultiplier(score, evolutionScoreOffset = 0) {
+  // If player has evolved, calculate visual size based on score gained since evolution
+  const visualScore = Math.max(0, score - evolutionScoreOffset);
+
+  if (visualScore < 3000) {
+    return 1 + (visualScore / 3000);
+  } else if (visualScore < 15000) {
+    return 2 + ((visualScore - 3000) / 12000);
+  } else if (visualScore < 75000) {
+    return 3 + ((visualScore - 15000) / 60000);
   } else {
     return 4;
   }
@@ -291,6 +411,8 @@ function generateRandomPremiumOrb() {
     id: Math.random().toString(36).substring(2, 11),
     x: Math.random() * GAME_CONFIG.MAP_WIDTH,
     y: Math.random() * GAME_CONFIG.MAP_HEIGHT,
+    vx: 0, // Velocity X for fleeing behavior
+    vy: 0, // Velocity Y for fleeing behavior
     size: 20,
     rotation: Math.random() * Math.PI * 2,
     color: '#dd00ff', // Neon purple/magenta
@@ -364,8 +486,8 @@ function ensureAIEntities() {
 }
 
 
-// Create HTTP server
-const httpServer = createServer();
+// Create HTTP server with Express app
+const httpServer = createServer(app);
 
 // Create Socket.IO server with CORS enabled
 const io = new Server(httpServer, {
@@ -382,12 +504,48 @@ const io = new Server(httpServer, {
 
 // Handle client connections
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  const clientIP = getClientIP(socket);
+
+  // Check if user is authenticated (optional)
+  const authToken = socket.handshake.auth?.token;
+  let authenticatedUserId = null;
+
+  if (authToken) {
+    try {
+      // Verify JWT token
+      const decoded = jwt.verify(authToken, process.env.JWT_SECRET);
+      authenticatedUserId = decoded.userId;
+      console.log(`Client connected (authenticated): ${socket.id} - User ID: ${authenticatedUserId} - IP: ${clientIP}`);
+
+      // Track user ID to socket mapping
+      userIdToSocketId.set(authenticatedUserId, socket.id);
+    } catch (error) {
+      console.log(`Client connected with invalid token: ${socket.id} from IP: ${clientIP}`);
+    }
+  } else {
+    console.log(`Client connected (guest): ${socket.id} from IP: ${clientIP}`);
+  }
+
+  // Track IP to socket mapping
+  ipToSocketId.set(clientIP, socket.id);
 
   // Handle player join
-  socket.on('join', (username) => {
+  socket.on('join', (data) => {
+    // Support both old format (string) and new format (object with customizations)
+    let playerName = '';
+    let activeNametag = null;
+    let activeSpike = null;
+
+    if (typeof data === 'string') {
+      playerName = data;
+    } else if (data && typeof data === 'object') {
+      playerName = data.username || '';
+      activeNametag = data.activeNametag || null;
+      activeSpike = data.activeSpike || null;
+    }
+
     // Validate and sanitize username
-    let playerName = username?.trim() || '';
+    playerName = playerName?.trim() || '';
 
     // Generate random username if empty or "noname"
     if (!playerName || playerName.toLowerCase() === 'noname') {
@@ -397,12 +555,104 @@ io.on('connection', (socket) => {
     // Limit username length
     playerName = playerName.substring(0, 20);
 
-    // Assign player to a random team and spawn inside that team's base
+    // Check for profanity in username
+    if (isProfane(playerName)) {
+      socket.emit('joinError', {
+        message: 'No bad words allowed in your name. Please choose a different name.'
+      });
+      return;
+    }
+
+    // Check for reconnection - prioritize user ID for authenticated users, then fall back to IP
+    let reconnectedPlayer = null;
+    let reconnectionKey = null;
+
+    // First, check if authenticated user has a disconnected session
+    if (authenticatedUserId) {
+      const userDisconnectedData = disconnectedPlayers.get(`user:${authenticatedUserId}`);
+      if (userDisconnectedData) {
+        reconnectedPlayer = userDisconnectedData.player;
+        reconnectionKey = `user:${authenticatedUserId}`;
+        console.log(`✅ User ID-based reconnection for user ${authenticatedUserId}: restoring player ${reconnectedPlayer.username}`);
+      }
+    }
+
+    // If no user-based reconnection, check IP-based reconnection (for guests or as fallback)
+    if (!reconnectedPlayer) {
+      const ipDisconnectedData = disconnectedPlayers.get(`ip:${clientIP}`);
+      if (ipDisconnectedData) {
+        reconnectedPlayer = ipDisconnectedData.player;
+        reconnectionKey = `ip:${clientIP}`;
+        console.log(`✅ IP-based reconnection for ${clientIP}: restoring player ${reconnectedPlayer.username}`);
+      }
+    }
+
+    // If we found a reconnection, clean it up
+    if (reconnectedPlayer && reconnectionKey) {
+      const disconnectedData = disconnectedPlayers.get(reconnectionKey);
+
+      // Clear the timeout that would have removed this player
+      if (disconnectedData.timeoutId) {
+        clearTimeout(disconnectedData.timeoutId);
+      }
+
+      // Remove from disconnected players map
+      disconnectedPlayers.delete(reconnectionKey);
+    }
+
+    // If reconnecting, restore their previous state
+    if (reconnectedPlayer) {
+      // Update socket ID to new connection
+      const oldSocketId = reconnectedPlayer.id;
+      reconnectedPlayer.id = socket.id;
+
+      // Remove old socket ID from players map if it exists
+      if (players.has(oldSocketId)) {
+        players.delete(oldSocketId);
+      }
+
+      // Add player with new socket ID
+      players.set(socket.id, reconnectedPlayer);
+
+      // Update IP to socket mapping
+      ipToSocketId.set(clientIP, socket.id);
+
+      // Send init with restored state
+      socket.emit('init', {
+        playerId: socket.id,
+        player: reconnectedPlayer,
+        players: Array.from(players.values()),
+        food: Array.from(food.values()),
+        premiumOrbs: Array.from(premiumOrbs.values()),
+        mapConfig: {
+          width: GAME_CONFIG.MAP_WIDTH,
+          height: GAME_CONFIG.MAP_HEIGHT,
+          teamBases: TEAMS.map(team => ({
+            id: team.id,
+            color: team.color,
+            x: team.base.x,
+            y: team.base.y,
+            width: team.base.width,
+            height: team.base.height,
+          })),
+        },
+        reconnected: true, // Flag to indicate this is a reconnection
+      });
+
+      // Notify all other players about the reconnected player
+      socket.broadcast.emit('playerJoined', reconnectedPlayer);
+
+      console.log(`Player reconnected: ${reconnectedPlayer.username} (${socket.id}) from IP: ${clientIP}`);
+      return;
+    }
+
+    // New player - assign to a random team and spawn inside that team's base
     const team = getRandomTeam();
     const spawnPos = getRandomSpawnPositionForTeam(team);
     const player = {
       id: socket.id,
       username: playerName,
+      userId: authenticatedUserId, // Store user ID for authenticated users
       x: spawnPos.x,
       y: spawnPos.y,
       vx: 0,
@@ -443,10 +693,20 @@ io.on('connection', (socket) => {
       teamId: team.id,
       // Evolution properties
       spikeType: 'Spike', // Default spike type
-      hasEvolved: false, // Track if player has evolved
+      hasEvolved: false, // Track if player has evolved to Tier 1
+      tier2Evolved: false, // Track if player has evolved to Tier 2
+      evolutionScoreOffset: 0, // Score offset for visual size reset on evolution
       lastAbilityTime: 0, // Track last time ability was used
       abilityActive: false, // Track if ability is currently active
       abilityProgress: 0, // Track ability animation progress (0 to 1)
+      // AFK properties
+      isAFK: false, // Track if player is AFK
+      afkActivationStartTime: 0, // Track when AFK activation started
+      afkActivationX: 0, // Track position when AFK activation started
+      afkActivationY: 0, // Track position when AFK activation started
+      // Customization properties
+      activeNametag: activeNametag || 'nametag_default', // Active nametag customization
+      activeSpike: activeSpike || 'spike_default', // Active spike customization
     };
 
     players.set(socket.id, player);
@@ -498,8 +758,8 @@ io.on('connection', (socket) => {
   socket.on('input', (inputs) => {
     const player = players.get(socket.id);
     if (player && inputs) {
-      // Ignore input if player is dying (fix death animation bug)
-      if (player.isDying) {
+      // Ignore input if player is dying or AFK
+      if (player.isDying || player.isAFK) {
         return;
       }
 
@@ -516,7 +776,7 @@ io.on('connection', (socket) => {
   // Handle speed boost ability
   socket.on('speedBoost', () => {
     const player = players.get(socket.id);
-    if (!player || player.isDying) return;
+    if (!player || player.isDying || player.isAFK) return;
 
     const now = Date.now();
     const cooldown = GAME_CONFIG.BOOST_COOLDOWN_MS || 15000;
@@ -545,7 +805,7 @@ io.on('connection', (socket) => {
     }
 
     // Compute adjusted speed similar to movement loop
-    const sizeMultiplier = getSizeMultiplier(player.score || 0);
+    const sizeMultiplier = getSizeMultiplier(player.score || 0, player.evolutionScoreOffset || 0);
     const speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
     const adjustedSpeed = GAME_CONFIG.PLAYER_SPEED * speedMultiplier;
 
@@ -580,6 +840,22 @@ io.on('connection', (socket) => {
     const player = players.get(socket.id);
     if (!player) return;
 
+    // Check if player is AFK
+    if (player.isAFK) {
+      return;
+    }
+
+    // Check if player is timed out from chat
+    const now = Date.now();
+    const timeout = chatTimeouts.get(socket.id);
+    if (timeout && now < timeout.until) {
+      const remainingSeconds = Math.ceil((timeout.until - now) / 1000);
+      socket.emit('chatError', {
+        message: `You are timed out from chat for ${remainingSeconds} more seconds.`
+      });
+      return;
+    }
+
     if (typeof rawMessage !== 'string') {
       rawMessage = String(rawMessage ?? '');
     }
@@ -592,6 +868,32 @@ io.on('connection', (socket) => {
       text = text.slice(0, 200);
     }
     text = text.replace(/[\r\n]+/g, ' ');
+
+    // Check for profanity in chat message
+    if (isProfane(text)) {
+      // Time out the player for 60 seconds
+      const timeoutUntil = now + 60000; // 60 seconds
+      chatTimeouts.set(socket.id, { until: timeoutUntil });
+
+      // Broadcast system message about the timeout
+      io.emit('chatMessage', {
+        id: Math.random().toString(36).substring(2, 11),
+        playerId: 'SYSTEM',
+        username: '[HELPER]',
+        text: `${player.username} timed out for 1 minute.`,
+        timestamp: now,
+        teamId: null,
+        teamColor: '#ffd700', // Golden color for system messages
+        isSystem: true,
+      });
+
+      // Notify the player they were timed out
+      socket.emit('chatError', {
+        message: 'Your message contained inappropriate language. You have been timed out for 60 seconds.'
+      });
+
+      return;
+    }
 
     const team = player.teamId ? TEAMS.find(t => t.id === player.teamId) : null;
     const teamColor = team ? team.color : player.color;
@@ -607,6 +909,42 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle AFK toggle
+  socket.on('toggleAFK', () => {
+    const player = players.get(socket.id);
+    if (!player || player.isDying || player.isAI) return;
+
+    // If already AFK, exit AFK mode immediately
+    if (player.isAFK) {
+      player.isAFK = false;
+      player.afkActivationStartTime = 0;
+      afkActivationTimers.delete(socket.id);
+
+      socket.emit('afkStatusChanged', { isAFK: false });
+      console.log(`Player ${player.username} exited AFK mode`);
+      return;
+    }
+
+    // Check if player is inside their own team base
+    if (!isPlayerInsideOwnBase(player)) {
+      socket.emit('afkError', {
+        message: 'You must be in your team\'s base to go AFK'
+      });
+      return;
+    }
+
+    // Start AFK activation timer
+    player.afkActivationStartTime = Date.now();
+    player.afkActivationX = player.x;
+    player.afkActivationY = player.y;
+
+    socket.emit('afkActivationStarted', {
+      duration: AFK_ACTIVATION_TIME_MS
+    });
+
+    console.log(`Player ${player.username} started AFK activation`);
+  });
+
   // Debug command: Set score to specific value
   socket.on('debugSetScore', (targetScore) => {
     const player = players.get(socket.id);
@@ -618,35 +956,66 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Debug command: Add score to current score
+  socket.on('debugAddScore', (scoreToAdd) => {
+    const player = players.get(socket.id);
+    if (!player || player.isDying) return;
+
+    // Validate score is a number
+    if (typeof scoreToAdd === 'number' && scoreToAdd > 0) {
+      player.score += scoreToAdd;
+
+      // Emit score update event to trigger evolution check on client
+      io.emit('foodCollected', {
+        playerId: socket.id,
+        foodId: 'debug',
+        newFood: null,
+        newScore: player.score
+      });
+    }
+  });
+
   // Handle evolution selection
   socket.on('evolve', (spikeType) => {
     const player = players.get(socket.id);
     if (!player || player.isDying) return;
 
-    // Validate spike type and that player hasn't evolved yet
-    if (!player.hasEvolved && EVOLUTION_CONFIG[spikeType] && player.score >= EVOLUTION_THRESHOLD) {
+    // Validate spike type exists in config
+    if (!EVOLUTION_CONFIG[spikeType]) return;
+
+    // Determine which tier this spike belongs to
+    const tier1Spikes = ['Prickle', 'Thorn', 'Bristle', 'Bulwark', 'Starflare', 'Mauler'];
+    const isTier1 = tier1Spikes.includes(spikeType);
+    const isTier2 = !isTier1;
+
+    // Check if player can evolve to this tier
+    const canEvolveTier1 = !player.hasEvolved && player.score >= EVOLUTION_THRESHOLD && isTier1;
+    const canEvolveTier2 = player.hasEvolved && !player.tier2Evolved && player.score >= TIER_2_THRESHOLD && isTier2;
+
+    if (canEvolveTier1 || canEvolveTier2) {
       player.spikeType = spikeType;
-      player.hasEvolved = true;
 
-      // Apply stat multipliers to player
-      const config = EVOLUTION_CONFIG[spikeType];
+      if (isTier1) {
+        player.hasEvolved = true;
+        // Set visual size offset to tier 1 threshold
+        // This makes the player appear as if they evolved at 5k and grew to current score
+        player.evolutionScoreOffset = EVOLUTION_THRESHOLD;
+      } else if (isTier2) {
+        player.tier2Evolved = true;
+        // Set visual size offset to tier 2 threshold
+        // This makes the player appear as if they evolved at 15k and grew to current score
+        player.evolutionScoreOffset = TIER_2_THRESHOLD;
+      }
 
-      // Adjust max HP based on health multiplier
-      const oldMaxHP = player.maxHP;
-      player.maxHP = Math.floor(oldMaxHP * config.health);
-
-      // Scale current HP proportionally
-      const hpRatio = player.currentHP / oldMaxHP;
-      player.currentHP = Math.floor(player.maxHP * hpRatio);
-
-      // Speed and damage multipliers will be applied in movement and collision calculations
+      // Stat multipliers (speed/damage/health) are applied dynamically in movement,
+      // collision, and max-HP calculations based on EVOLUTION_CONFIG[spikeType].
     }
   });
 
   // Handle ability usage
   socket.on('useAbility', () => {
     const player = players.get(socket.id);
-    if (!player || player.isDying) return;
+    if (!player || player.isDying || player.isAFK) return;
 
     // Check if player has evolved
     if (!player.hasEvolved || !player.spikeType || player.spikeType === 'Spike') return;
@@ -665,12 +1034,13 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Double Speed (Bristle) can only be used while moving
-    if (player.spikeType === 'Bristle') {
+    // Double Speed (Bristle and variants) can only be used while moving
+    const speedAbilities = ['Bristle', 'BristleBlitz', 'BristleStrider', 'BristleSkirmisher'];
+    if (speedAbilities.includes(player.spikeType)) {
       const isMoving = player.inputs.up || player.inputs.down || player.inputs.left || player.inputs.right;
       if (!isMoving) {
         socket.emit('abilityError', {
-          message: 'Must be moving to use Double Speed.'
+          message: 'Must be moving to use speed ability.'
         });
         return;
       }
@@ -691,6 +1061,7 @@ io.on('connection', (socket) => {
 
     // Handle specific ability effects
     switch (player.spikeType) {
+      // Tier 1 abilities
       case 'Prickle': // Super Density - orange shield visual
         // Effect handled in collision detection
         break;
@@ -704,18 +1075,180 @@ io.on('connection', (socket) => {
         // Effect handled in collision detection
         break;
       case 'Starflare': // Teleportation to base
-        const team = TEAMS.find(t => t.id === player.teamId);
-        if (team) {
-          const base = team.base;
-          const padding = 100;
-          player.x = base.x + padding + Math.random() * (base.width - padding * 2);
-          player.y = base.y + padding + Math.random() * (base.height - padding * 2);
-          player.vx = 0;
-          player.vy = 0;
+        {
+          const team = TEAMS.find(t => t.id === player.teamId);
+          if (team) {
+            const base = team.base;
+            const padding = 100;
+            player.x = base.x + padding + Math.random() * (base.width - padding * 2);
+            player.y = base.y + padding + Math.random() * (base.height - padding * 2);
+            player.vx = 0;
+            player.vy = 0;
+          }
         }
         break;
       case 'Mauler': // Fortress - defense shield
         // Effect handled in collision detection
+        break;
+
+      // Tier 2 - Prickle variants
+      case 'PrickleVanguard': // Overdensity - 2.2x damage + shield + 30% damage reduction
+        // Effect handled in collision detection
+        break;
+      case 'PrickleSwarm': // Spine Storm - rapid contact damage ticks
+        // Mark that this player has spine storm active
+        player.spineStormActive = true;
+        player.spineStormLastTick = now;
+        break;
+      case 'PrickleBastion': // Spine Bulwark - 50% damage reduction + 25% reflect
+        // Effect handled in collision detection
+        break;
+
+      // Tier 2 - Thorn variants
+      case 'ThornWraith': // Wraith Walk - enhanced ghost mode
+        // Effect handled in collision detection
+        break;
+      case 'ThornReaper': // Execution Lunge - next hit +40% damage + slow
+        // Mark that this player will slow enemies on hit
+        player.executionLungeActive = true;
+        break;
+      case 'ThornShade': // Shadow Slip - instant dash
+        {
+          // Instant dash in the direction of movement
+          const isMoving = player.inputs.up || player.inputs.down || player.inputs.left || player.inputs.right;
+          if (isMoving) {
+            let dashX = 0;
+            let dashY = 0;
+            if (player.inputs.up) dashY -= 1;
+            if (player.inputs.down) dashY += 1;
+            if (player.inputs.left) dashX -= 1;
+            if (player.inputs.right) dashX += 1;
+
+            // Normalize direction
+            const dashDist = Math.sqrt(dashX * dashX + dashY * dashY);
+            if (dashDist > 0) {
+              dashX /= dashDist;
+              dashY /= dashDist;
+
+              // Dash distance
+              const dashLength = 150;
+              player.x += dashX * dashLength;
+              player.y += dashY * dashLength;
+
+              // Clamp to map bounds
+              player.x = Math.max(50, Math.min(GAME_CONFIG.MAP_WIDTH - 50, player.x));
+              player.y = Math.max(50, Math.min(GAME_CONFIG.MAP_HEIGHT - 50, player.y));
+            }
+          }
+        }
+        break;
+
+      // Tier 2 - Bristle variants
+      case 'BristleBlitz': // Triple Rush - 2.3x speed
+        // Effect handled in movement calculation
+        break;
+      case 'BristleStrider': // Trailing Surge - 2x speed + damaging trail
+        // Initialize trail array if not exists
+        if (!player.damageTrail) {
+          player.damageTrail = [];
+        }
+        break;
+      case 'BristleSkirmisher': // Kinetic Guard - 1.8x speed + 20% damage reduction
+        // Effect handled in movement calculation and collision
+        break;
+
+      // Tier 2 - Bulwark variants
+      case 'BulwarkAegis': // Fortified Aegis - invincibility + knockback resistance
+        // Effect handled in collision detection
+        break;
+      case 'BulwarkCitadel': // Bastion Field - aura that helps allies
+        // Effect handled in collision detection
+        break;
+      case 'BulwarkJuggernaut': // Unstoppable - invincible + no slow/knockback
+        // Effect handled in collision detection
+        break;
+
+      // Tier 2 - Starflare variants
+      case 'StarflarePulsar': // Offensive Warp - teleport + shockwave
+        {
+          const team = TEAMS.find(t => t.id === player.teamId);
+          if (team) {
+            const base = team.base;
+            const padding = 100;
+            player.x = base.x + padding + Math.random() * (base.width - padding * 2);
+            player.y = base.y + padding + Math.random() * (base.height - padding * 2);
+            player.vx = 0;
+            player.vy = 0;
+            // Mark shockwave position and time
+            player.shockwaveX = player.x;
+            player.shockwaveY = player.y;
+            player.shockwaveTime = now;
+          }
+        }
+        break;
+      case 'StarflareHorizon': // Short Blink - short-range teleport
+        {
+          // Blink in the direction of movement
+          const isMoving = player.inputs.up || player.inputs.down || player.inputs.left || player.inputs.right;
+          if (isMoving) {
+            let blinkX = 0;
+            let blinkY = 0;
+            if (player.inputs.up) blinkY -= 1;
+            if (player.inputs.down) blinkY += 1;
+            if (player.inputs.left) blinkX -= 1;
+            if (player.inputs.right) blinkX += 1;
+
+            // Normalize direction
+            const blinkDist = Math.sqrt(blinkX * blinkX + blinkY * blinkY);
+            if (blinkDist > 0) {
+              blinkX /= blinkDist;
+              blinkY /= blinkDist;
+
+              // Blink distance
+              const blinkLength = 300;
+              player.x += blinkX * blinkLength;
+              player.y += blinkY * blinkLength;
+
+              // Clamp to map bounds
+              player.x = Math.max(50, Math.min(GAME_CONFIG.MAP_WIDTH - 50, player.x));
+              player.y = Math.max(50, Math.min(GAME_CONFIG.MAP_HEIGHT - 50, player.y));
+            }
+          }
+        }
+        break;
+      case 'StarflareNova': // Nova Shift - teleport to base + delayed explosion at origin
+        {
+          // Store old position for explosion
+          const oldX = player.x;
+          const oldY = player.y;
+
+          // Teleport to base (like StarflarePulsar but without shockwave)
+          const team = TEAMS.find(t => t.id === player.teamId);
+          if (team) {
+            const base = team.base;
+            const padding = 100;
+            player.x = base.x + padding + Math.random() * (base.width - padding * 2);
+            player.y = base.y + padding + Math.random() * (base.height - padding * 2);
+            player.vx = 0;
+            player.vy = 0;
+          }
+
+          // Create delayed explosion at old position
+          player.novaExplosionX = oldX;
+          player.novaExplosionY = oldY;
+          player.novaExplosionTime = now + 700; // Detonate after 0.7s
+        }
+        break;
+
+      // Tier 2 - Mauler variants
+      case 'MaulerRavager': // Rend - apply bleed on hits
+        // Effect handled in collision detection
+        break;
+      case 'MaulerBulwark': // Fortified Fortress - stronger shield + thorns
+        // Effect handled in collision detection
+        break;
+      case 'MaulerApex': // Blood Frenzy - +25% damage, +15% speed, +15% damage taken
+        // Effect handled in collision and movement
         break;
     }
 
@@ -725,6 +1258,12 @@ io.on('connection', (socket) => {
         const p = players.get(socket.id);
         p.abilityActive = false;
         p.abilityProgress = 0;
+        // Clear ability-specific flags
+        p.executionLungeActive = false;
+        p.spineStormActive = false;
+        if (p.damageTrail) {
+          p.damageTrail = [];
+        }
       }
     }, config.abilityDuration);
   });
@@ -787,9 +1326,16 @@ io.on('connection', (socket) => {
       // Evolution properties (reset on respawn)
       spikeType: 'Spike',
       hasEvolved: false,
+      tier2Evolved: false,
+      evolutionScoreOffset: 0,
       lastAbilityTime: 0,
       abilityActive: false,
       abilityProgress: 0,
+      // AFK properties (reset on respawn)
+      isAFK: false,
+      afkActivationStartTime: 0,
+      afkActivationX: 0,
+      afkActivationY: 0,
     };
 
     players.set(socket.id, player);
@@ -821,21 +1367,94 @@ io.on('connection', (socket) => {
     console.log(`Player respawned: ${playerName} (${socket.id})`);
   });
 
+  // Handle player leaving game (going to menu without disconnecting)
+  socket.on('leaveGame', () => {
+    const player = players.get(socket.id);
+    if (player) {
+      console.log(`Player leaving game: ${player.username} (${socket.id})`);
+
+      // Remove player from game
+      players.delete(socket.id);
+
+      // Clean up AFK timer if exists
+      afkActivationTimers.delete(socket.id);
+
+      // Clean up chat timeout if exists
+      chatTimeouts.delete(socket.id);
+
+      // Notify all clients about player leaving
+      io.emit('playerLeft', socket.id);
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     const player = players.get(socket.id);
     if (player) {
-      console.log(`Player disconnected: ${player.username} (${socket.id})`);
-      players.delete(socket.id);
+      console.log(`Player disconnected: ${player.username} (${socket.id}) from IP: ${clientIP}`);
 
-      // Notify all clients about player leaving
-      io.emit('playerLeft', socket.id);
+      // Don't save AI players or players that are already in a death
+      // animation for reconnection. If they were dying when the socket
+      // dropped, they should respawn fresh instead of resurrecting a
+      // nearly-dead state.
+      if (!player.isAI && !player.isDying) {
+        // Determine reconnection key - prioritize user ID for authenticated users
+        const reconnectionKey = player.userId ? `user:${player.userId}` : `ip:${clientIP}`;
+
+        // Set a timeout to remove the player after 60 seconds
+        const timeoutId = setTimeout(() => {
+          const disconnectedData = disconnectedPlayers.get(reconnectionKey);
+          if (disconnectedData && disconnectedData.player.id === socket.id) {
+            // Remove from disconnected players
+            disconnectedPlayers.delete(reconnectionKey);
+
+            // Remove from active players if still there
+            if (players.has(socket.id)) {
+              players.delete(socket.id);
+
+              // Notify all clients about player leaving
+              io.emit('playerLeft', socket.id);
+            }
+
+            console.log(`⏱️ Reconnection window expired for ${player.username} (${reconnectionKey})`);
+          }
+        }, RECONNECTION_TIMEOUT_MS);
+
+        // Store player data with reconnection key
+        disconnectedPlayers.set(reconnectionKey, {
+          player: player,
+          disconnectTime: Date.now(),
+          timeoutId: timeoutId,
+          reconnectionKey: reconnectionKey,
+        });
+
+        console.log(`💾 Player ${player.username} saved for reconnection (${reconnectionKey}). Entity remains in game for 60 seconds.`);
+
+        // DON'T remove from active players yet - keep the entity in the game
+        // This allows the player to see their spike when they reconnect
+        // The entity will be removed after 60 seconds if they don't reconnect
+      } else {
+        // AI players or dying players - remove immediately
+        players.delete(socket.id);
+
+        // Clean up AFK timer if exists
+        afkActivationTimers.delete(socket.id);
+
+        // Clean up chat timeout if exists
+        chatTimeouts.delete(socket.id);
+
+        // Notify all clients about player leaving
+        io.emit('playerLeft', socket.id);
+      }
     }
   });
 });
 
 // Game loop - update game state and broadcast to all clients
 function gameLoop() {
+  // Single timestamp for this tick
+  const now = Date.now();
+
   // Ensure AI entities are present
   ensureAIEntities();
 
@@ -860,9 +1479,41 @@ function gameLoop() {
       return;
     }
 
+    // Check AFK activation progress (for non-AI players)
+    if (!player.isAI && player.afkActivationStartTime > 0 && !player.isAFK) {
+      const elapsed = now - player.afkActivationStartTime;
+      const distanceMoved = Math.sqrt(
+        Math.pow(player.x - player.afkActivationX, 2) +
+        Math.pow(player.y - player.afkActivationY, 2)
+      );
+
+      // Check if player moved or left base during activation
+      if (distanceMoved > 5 || !isPlayerInsideOwnBase(player)) {
+        // Cancel AFK activation
+        player.afkActivationStartTime = 0;
+        io.to(player.id).emit('afkActivationCancelled', {
+          reason: distanceMoved > 5 ? 'You moved' : 'You left your base'
+        });
+      } else if (elapsed >= AFK_ACTIVATION_TIME_MS) {
+        // Activate AFK mode
+        player.isAFK = true;
+        player.afkActivationStartTime = 0;
+        io.to(player.id).emit('afkStatusChanged', { isAFK: true });
+        console.log(`Player ${player.username} is now AFK`);
+      }
+    }
+
+    // Skip movement for AFK players
+    if (player.isAFK) {
+      return;
+    }
+
     // Calculate size multiplier for speed scaling
     const effectiveScoreForSize = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
-    const sizeMultiplier = getSizeMultiplier(effectiveScoreForSize);
+    const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0);
+    const sizeMultiplier = getSizeMultiplier(effectiveScoreForSize, evolutionOffset);
+    // Calculate player's actual size based on score (needed for trail damage radius)
+    const actualSize = GAME_CONFIG.PLAYER_SIZE * sizeMultiplier;
     // Bigger players are slower (inverse relationship)
     // At 1x size: 100% speed, at 2x size: ~71% speed, at 3x size: ~58% speed
     let speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
@@ -877,6 +1528,30 @@ function gameLoop() {
     // Bristle: Double Speed ability
     if (player.abilityActive && player.spikeType === 'Bristle') {
       speedMultiplier *= 2;
+    }
+    // BristleBlitz: Triple Rush - 2.3x speed
+    if (player.abilityActive && player.spikeType === 'BristleBlitz') {
+      speedMultiplier *= 2.3;
+    }
+    // BristleStrider: Trailing Surge - 2x speed
+    if (player.abilityActive && player.spikeType === 'BristleStrider') {
+      speedMultiplier *= 2;
+    }
+    // BristleSkirmisher: Kinetic Guard - 1.8x speed
+    if (player.abilityActive && player.spikeType === 'BristleSkirmisher') {
+      speedMultiplier *= 1.8;
+    }
+    // MaulerApex: Blood Frenzy - +15% speed
+    if (player.abilityActive && player.spikeType === 'MaulerApex') {
+      speedMultiplier *= 1.15;
+    }
+    // Apply slow effect from ThornReaper's Execution Lunge
+    if (player.slowedUntil && now < player.slowedUntil) {
+      speedMultiplier *= (player.slowFactor || 0.5);
+    } else if (player.slowedUntil) {
+      // Clear slow effect when expired
+      player.slowedUntil = null;
+      player.slowFactor = null;
     }
     const adjustedSpeed = GAME_CONFIG.PLAYER_SPEED * speedMultiplier;
 
@@ -1003,6 +1678,22 @@ function gameLoop() {
     player.x += player.vx;
     player.y += player.vy;
 
+    // BristleStrider: Trailing Surge - record damage trail positions
+    if (player.abilityActive && player.spikeType === 'BristleStrider') {
+      if (!player.damageTrail) {
+        player.damageTrail = [];
+      }
+      // Add current position to trail
+      player.damageTrail.push({
+        x: player.x,
+        y: player.y,
+        timestamp: now,
+        radius: actualSize * 0.8, // Trail damage radius
+      });
+      // Keep only recent trail positions (last 500ms)
+      player.damageTrail = player.damageTrail.filter(pos => now - pos.timestamp < 500);
+    }
+
     // Update rotation
     player.rotation += player.rotationSpeed;
 
@@ -1033,10 +1724,7 @@ function gameLoop() {
       player.health = Math.min((newHP / maxHP) * 100, 100);
     }
 
-    // Calculate player's actual size based on score (reuse sizeMultiplier from above)
-    const actualSize = GAME_CONFIG.PLAYER_SIZE * sizeMultiplier;
-
-    // Enforce map boundaries
+    // Enforce map boundaries (actualSize already calculated above)
     const totalSize = actualSize * 1.29; // body radius + thorn length (scaled)
     player.x = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_WIDTH - totalSize, player.x));
     player.y = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_HEIGHT - totalSize, player.y));
@@ -1177,9 +1865,25 @@ function gameLoop() {
       });
     }
 
-    // Update max HP based on score (AI use fixed 500-score baseline for toughness)
+    // Update max HP based on score and evolution health multiplier (AI use fixed 500-score baseline for toughness)
     const effectiveScoreForHP = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
-    player.maxHP = getMaxHP(effectiveScoreForHP);
+    const baseMaxHP = getMaxHP(effectiveScoreForHP);
+    const healthMultiplier = (player.spikeType && EVOLUTION_CONFIG[player.spikeType])
+      ? EVOLUTION_CONFIG[player.spikeType].health
+      : 1;
+    const newMaxHP = Math.max(1, Math.floor(baseMaxHP * healthMultiplier));
+
+    if (!player.maxHP) {
+      player.maxHP = newMaxHP;
+      player.currentHP = newMaxHP;
+    } else if (player.maxHP !== newMaxHP) {
+      const hpRatio = player.currentHP / player.maxHP;
+      player.maxHP = newMaxHP;
+      player.currentHP = Math.max(1, Math.floor(newMaxHP * Math.max(0, Math.min(1, hpRatio))));
+    }
+
+    // Keep health percentage in sync for UI and regen
+    player.health = Math.min(100, Math.max(0, (player.currentHP / player.maxHP) * 100));
 
     // Update angry animation
     if (player.isAngry) {
@@ -1200,17 +1904,206 @@ function gameLoop() {
     }
   });
 
+  // PrickleSwarm: Spine Storm - rapid damage ticks to nearby enemies
+  players.forEach((player) => {
+    if (player.spineStormActive && player.abilityActive && player.spikeType === 'PrickleSwarm') {
+      const currentTime = Date.now();
+      const tickInterval = 200; // Damage tick every 200ms
+      if (!player.spineStormLastTick || currentTime - player.spineStormLastTick >= tickInterval) {
+        player.spineStormLastTick = currentTime;
+
+        const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+        const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0);
+        const playerSize = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(effectiveScore, evolutionOffset);
+        const stormRadius = playerSize * 2.5; // Short radius around player
+
+        // Deal damage to all nearby enemies
+        players.forEach((target) => {
+          if (target.id === player.id) return;
+          if (target.isDying) return;
+          if (player.isAI && target.isAI) return; // AI don't damage each other
+          if (player.teamId && player.teamId === target.teamId) return; // Same team
+
+          const dx = target.x - player.x;
+          const dy = target.y - player.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < stormRadius) {
+            // Deal small rapid damage
+            const tickDamage = Math.max(1, Math.round(getDamagePoints(effectiveScore) * 0.3));
+            target.currentHP -= tickDamage;
+            target.currentHP = Math.max(0, target.currentHP);
+            target.health = (target.currentHP / target.maxHP) * 100;
+
+            // Track damage for assists
+            const currentDamage = target.damageDealt.get(player.id) || 0;
+            target.damageDealt.set(player.id, currentDamage + tickDamage);
+          }
+        });
+      }
+    }
+  });
+
+  // BristleStrider: Trailing Surge - check trail collisions
+  players.forEach((player) => {
+    if (player.damageTrail && player.damageTrail.length > 0 && player.abilityActive && player.spikeType === 'BristleStrider') {
+      const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+
+      players.forEach((target) => {
+        if (target.id === player.id) return;
+        if (target.isDying) return;
+        if (player.isAI && target.isAI) return;
+        if (player.teamId && player.teamId === target.teamId) return;
+
+        // Check if target is touching any trail position
+        for (const trailPos of player.damageTrail) {
+          const dx = target.x - trailPos.x;
+          const dy = target.y - trailPos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < trailPos.radius) {
+            // Deal trail damage (once per trail segment to avoid spam)
+            if (!target.lastTrailDamageTime || Date.now() - target.lastTrailDamageTime > 300) {
+              const trailDamage = Math.max(1, Math.round(getDamagePoints(effectiveScore) * 0.5));
+              target.currentHP -= trailDamage;
+              target.currentHP = Math.max(0, target.currentHP);
+              target.health = (target.currentHP / target.maxHP) * 100;
+              target.lastTrailDamageTime = Date.now();
+
+              // Track damage for assists
+              const currentDamage = target.damageDealt.get(player.id) || 0;
+              target.damageDealt.set(player.id, currentDamage + trailDamage);
+            }
+            break; // Only damage once per frame
+          }
+        }
+      });
+    }
+  });
+
+  // StarflarePulsar: Offensive Warp - shockwave damage on arrival
+  players.forEach((player) => {
+    if (player.shockwaveTime && Date.now() - player.shockwaveTime < 500) {
+      // Shockwave lasts for 500ms after teleport
+      const shockwaveX = player.shockwaveX;
+      const shockwaveY = player.shockwaveY;
+      const shockwaveRadius = 150;
+      const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+      const baseDamage = getDamagePoints(effectiveScore);
+
+      // Deal damage to all enemies in shockwave radius (once per shockwave)
+      if (!player.shockwaveDamaged) {
+        player.shockwaveDamaged = new Set();
+      }
+
+      players.forEach((target) => {
+        if (target.id === player.id) return;
+        if (target.isDying) return;
+        if (player.isAI && target.isAI) return;
+        if (player.teamId && player.teamId === target.teamId) return;
+        if (player.shockwaveDamaged.has(target.id)) return; // Already damaged by this shockwave
+
+        const dx = target.x - shockwaveX;
+        const dy = target.y - shockwaveY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < shockwaveRadius) {
+          const shockwaveDamage = Math.max(1, Math.round(baseDamage * 2)); // 2x base damage
+
+          target.currentHP -= shockwaveDamage;
+          target.currentHP = Math.max(0, target.currentHP);
+          target.health = (target.currentHP / target.maxHP) * 100;
+
+          // Track damage for assists
+          const currentDamage = target.damageDealt.get(player.id) || 0;
+          target.damageDealt.set(player.id, currentDamage + shockwaveDamage);
+
+          // Mark as damaged by this shockwave
+          player.shockwaveDamaged.add(target.id);
+
+          // Apply knockback
+          if (distance > 0) {
+            const knockbackStrength = 12;
+            const nx = dx / distance;
+            const ny = dy / distance;
+            target.vx += nx * knockbackStrength;
+            target.vy += ny * knockbackStrength;
+          }
+        }
+      });
+    } else if (player.shockwaveTime && Date.now() - player.shockwaveTime >= 500) {
+      // Clear shockwave data after it expires
+      player.shockwaveX = null;
+      player.shockwaveY = null;
+      player.shockwaveTime = null;
+      player.shockwaveDamaged = null;
+    }
+  });
+
+  // StarflareNova: Nova Shift - check for delayed explosions
+  players.forEach((player) => {
+    if (player.novaExplosionTime && Date.now() >= player.novaExplosionTime) {
+      const explosionX = player.novaExplosionX;
+      const explosionY = player.novaExplosionY;
+      const explosionRadius = 200; // Large AoE explosion
+      const effectiveScore = player.isAI ? AI_CONFIG.BASE_SCORE : player.score;
+      const baseDamage = getDamagePoints(effectiveScore);
+
+      // Deal damage to all enemies in explosion radius
+      players.forEach((target) => {
+        if (target.id === player.id) return;
+        if (target.isDying) return;
+        if (player.isAI && target.isAI) return;
+        if (player.teamId && player.teamId === target.teamId) return;
+
+        const dx = target.x - explosionX;
+        const dy = target.y - explosionY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < explosionRadius) {
+          // Damage falls off with distance
+          const damageFalloff = 1 - (distance / explosionRadius);
+          const explosionDamage = Math.max(1, Math.round(baseDamage * 0.2 * damageFalloff)); // 20% base damage at center
+
+          target.currentHP -= explosionDamage;
+          target.currentHP = Math.max(0, target.currentHP);
+          target.health = (target.currentHP / target.maxHP) * 100;
+
+          // Track damage for assists
+          const currentDamage = target.damageDealt.get(player.id) || 0;
+          target.damageDealt.set(player.id, currentDamage + explosionDamage);
+
+          // Apply knockback from explosion
+          if (distance > 0) {
+            const knockbackStrength = 15 * damageFalloff;
+            const nx = dx / distance;
+            const ny = dy / distance;
+            target.vx += nx * knockbackStrength;
+            target.vy += ny * knockbackStrength;
+          }
+        }
+      });
+
+      // Clear explosion data
+      player.novaExplosionX = null;
+      player.novaExplosionY = null;
+      player.novaExplosionTime = null;
+    }
+  });
+
   // Check player-to-player collisions
   const playerArray = Array.from(players.values());
   for (let i = 0; i < playerArray.length; i++) {
     const player1 = playerArray[i];
     if (player1.isDying) continue;
-    const size1 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score);
+    const evolutionOffset1 = player1.isAI ? 0 : (player1.evolutionScoreOffset || 0);
+    const size1 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score, evolutionOffset1);
 
     for (let j = i + 1; j < playerArray.length; j++) {
       const player2 = playerArray[j];
       if (player2.isDying) continue;
-      const size2 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score);
+      const evolutionOffset2 = player2.isAI ? 0 : (player2.evolutionScoreOffset || 0);
+      const size2 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score, evolutionOffset2);
 
       // Calculate distance between players
       const dx = player2.x - player1.x;
@@ -1224,9 +2117,10 @@ function gameLoop() {
         // Collision detected!
         const currentTime = Date.now();
 
-        // Check for Ghost Mode ability (Thorn) - pass through spikes
-        const player1GhostMode = player1.abilityActive && player1.spikeType === 'Thorn';
-        const player2GhostMode = player2.abilityActive && player2.spikeType === 'Thorn';
+        // Check for Ghost Mode ability (Thorn and variants) - pass through spikes
+        const ghostModeSpikes = ['Thorn', 'ThornWraith', 'ThornShade'];
+        const player1GhostMode = player1.abilityActive && ghostModeSpikes.includes(player1.spikeType);
+        const player2GhostMode = player2.abilityActive && ghostModeSpikes.includes(player2.spikeType);
 
         // If either player has ghost mode, skip collision entirely
         if (player1GhostMode || player2GhostMode) {
@@ -1268,6 +2162,22 @@ function gameLoop() {
           baseImpulse *= 3;
         }
 
+        // MaulerBulwark: Fortified Fortress - 3x knockback
+        if (player1.abilityActive && player1.spikeType === 'MaulerBulwark') {
+          baseImpulse *= 3;
+        }
+        if (player2.abilityActive && player2.spikeType === 'MaulerBulwark') {
+          baseImpulse *= 3;
+        }
+
+        // BulwarkCitadel: Bastion Field - knockback enemies
+        if (player1.abilityActive && player1.spikeType === 'BulwarkCitadel') {
+          baseImpulse *= 2;
+        }
+        if (player2.abilityActive && player2.spikeType === 'BulwarkCitadel') {
+          baseImpulse *= 2;
+        }
+
         const depthFactor = Math.min(overlap / (GAME_CONFIG.PLAYER_SIZE * 0.8), 2); // 0..2
         const impulseStrength = baseImpulse * (1 + 0.5 * depthFactor);
 
@@ -1299,10 +2209,10 @@ function gameLoop() {
           const speedNorm1 = Math.min(speed1 / maxBaseSpeed, 1);
           const speedNorm2 = Math.min(speed2 / maxBaseSpeed, 1);
 
-          // Momentum-based damage scaling
-          // At 0 speed -> 0.5x base damage, at max speed -> 2x base damage
-          let factor1 = 0.5 + speedNorm1 * 1.5;
-          let factor2 = 0.5 + speedNorm2 * 1.5;
+          // Momentum-based damage scaling (balanced)
+          // At 0 speed -> 0.7x base damage, at max speed -> 1.8x base damage
+          let factor1 = 0.7 + speedNorm1 * 1.1;
+          let factor2 = 0.7 + speedNorm2 * 1.1;
 
           // Apply evolution damage multipliers
           if (player1.spikeType && EVOLUTION_CONFIG[player1.spikeType]) {
@@ -1321,10 +2231,34 @@ function gameLoop() {
             factor2 *= 2;
           }
 
+          // PrickleVanguard: Overdensity - 2.2x damage dealt
+          if (player1.abilityActive && player1.spikeType === 'PrickleVanguard') {
+            factor1 *= 2.2;
+          }
+          if (player2.abilityActive && player2.spikeType === 'PrickleVanguard') {
+            factor2 *= 2.2;
+          }
+
+          // ThornReaper: Execution Lunge - +40% damage on next hit
+          if (player1.abilityActive && player1.spikeType === 'ThornReaper') {
+            factor1 *= 1.4;
+          }
+          if (player2.abilityActive && player2.spikeType === 'ThornReaper') {
+            factor2 *= 1.4;
+          }
+
+          // MaulerApex: Blood Frenzy - +25% damage dealt
+          if (player1.abilityActive && player1.spikeType === 'MaulerApex') {
+            factor1 *= 1.25;
+          }
+          if (player2.abilityActive && player2.spikeType === 'MaulerApex') {
+            factor2 *= 1.25;
+          }
+
           // Mauler: Fortress - pushes opponents away (handled in knockback)
           // Bulwark: Invincibility - no damage taken
-          const player1Invincible = player1.abilityActive && player1.spikeType === 'Bulwark';
-          const player2Invincible = player2.abilityActive && player2.spikeType === 'Bulwark';
+          const player1Invincible = player1.abilityActive && (player1.spikeType === 'Bulwark' || player1.spikeType === 'BulwarkAegis' || player1.spikeType === 'BulwarkJuggernaut');
+          const player2Invincible = player2.abilityActive && (player2.spikeType === 'Bulwark' || player2.spikeType === 'BulwarkAegis' || player2.spikeType === 'BulwarkJuggernaut');
 
           let damageFrom1To2 = Math.max(1, Math.round(baseDamageFrom1To2 * factor1));
           let damageFrom2To1 = Math.max(1, Math.round(baseDamageFrom2To1 * factor2));
@@ -1333,10 +2267,64 @@ function gameLoop() {
           if (player2Invincible) damageFrom1To2 = 0;
           if (player1Invincible) damageFrom2To1 = 0;
 
+          // Damage reduction abilities
+          // PrickleVanguard: Overdensity - 30% damage reduction
+          if (player1.abilityActive && player1.spikeType === 'PrickleVanguard') {
+            damageFrom2To1 = Math.round(damageFrom2To1 * 0.7);
+          }
+          if (player2.abilityActive && player2.spikeType === 'PrickleVanguard') {
+            damageFrom1To2 = Math.round(damageFrom1To2 * 0.7);
+          }
+
+          // PrickleBastion: Spine Bulwark - 50% damage reduction + 25% reflect
+          if (player1.abilityActive && player1.spikeType === 'PrickleBastion') {
+            const reducedDamage = Math.round(damageFrom2To1 * 0.5);
+            const reflectDamage = Math.round(damageFrom2To1 * 0.25);
+            damageFrom2To1 = reducedDamage;
+            damageFrom1To2 += reflectDamage; // Reflect damage back
+          }
+          if (player2.abilityActive && player2.spikeType === 'PrickleBastion') {
+            const reducedDamage = Math.round(damageFrom1To2 * 0.5);
+            const reflectDamage = Math.round(damageFrom1To2 * 0.25);
+            damageFrom1To2 = reducedDamage;
+            damageFrom2To1 += reflectDamage; // Reflect damage back
+          }
+
+          // BristleSkirmisher: Kinetic Guard - 20% damage reduction
+          if (player1.abilityActive && player1.spikeType === 'BristleSkirmisher') {
+            damageFrom2To1 = Math.round(damageFrom2To1 * 0.8);
+          }
+          if (player2.abilityActive && player2.spikeType === 'BristleSkirmisher') {
+            damageFrom1To2 = Math.round(damageFrom1To2 * 0.8);
+          }
+
+          // MaulerBulwark: Fortified Fortress - 35% damage reduction + thorns
+          if (player1.abilityActive && player1.spikeType === 'MaulerBulwark') {
+            const reducedDamage = Math.round(damageFrom2To1 * 0.65);
+            const thornsDamage = Math.round(damageFrom2To1 * 0.2);
+            damageFrom2To1 = reducedDamage;
+            damageFrom1To2 += thornsDamage; // Thorns damage back
+          }
+          if (player2.abilityActive && player2.spikeType === 'MaulerBulwark') {
+            const reducedDamage = Math.round(damageFrom1To2 * 0.65);
+            const thornsDamage = Math.round(damageFrom1To2 * 0.2);
+            damageFrom1To2 = reducedDamage;
+            damageFrom2To1 += thornsDamage; // Thorns damage back
+          }
+
+          // MaulerApex: Blood Frenzy - +15% damage taken
+          if (player1.abilityActive && player1.spikeType === 'MaulerApex') {
+            damageFrom2To1 = Math.round(damageFrom2To1 * 1.15);
+          }
+          if (player2.abilityActive && player2.spikeType === 'MaulerApex') {
+            damageFrom1To2 = Math.round(damageFrom1To2 * 1.15);
+          }
+
           // Apply damage to both players and track damage dealt
           if (canDamage2 && damageFrom1To2 > 0) {
             // Player2 receives damage based on player1's momentum
             player2.currentHP -= damageFrom1To2;
+            player2.currentHP = Math.max(0, player2.currentHP);
             player2.health = (player2.currentHP / player2.maxHP) * 100;
             player2.isAngry = true;
             player2.lastCollisionTime = currentTime;
@@ -1345,11 +2333,18 @@ function gameLoop() {
             // Track damage dealt by player1 to player2 (for assists)
             const currentDamage = player2.damageDealt.get(player1.id) || 0;
             player2.damageDealt.set(player1.id, currentDamage + damageFrom1To2);
+
+            // ThornReaper: Execution Lunge - slow enemy for 3s after hit
+            if (player1.executionLungeActive && player1.spikeType === 'ThornReaper') {
+              player2.slowedUntil = currentTime + 3000;
+              player2.slowFactor = 0.5; // 50% speed reduction
+            }
           }
 
           if (canDamage1 && damageFrom2To1 > 0) {
             // Player1 receives damage based on player2's momentum
             player1.currentHP -= damageFrom2To1;
+            player1.currentHP = Math.max(0, player1.currentHP);
             player1.health = (player1.currentHP / player1.maxHP) * 100;
             player1.isAngry = true;
             player1.lastCollisionTime = currentTime;
@@ -1358,6 +2353,12 @@ function gameLoop() {
             // Track damage dealt by player2 to player1 (for assists)
             const currentDamage = player1.damageDealt.get(player2.id) || 0;
             player1.damageDealt.set(player2.id, currentDamage + damageFrom2To1);
+
+            // ThornReaper: Execution Lunge - slow enemy for 3s after hit
+            if (player2.executionLungeActive && player2.spikeType === 'ThornReaper') {
+              player1.slowedUntil = currentTime + 3000;
+              player1.slowFactor = 0.5; // 50% speed reduction
+            }
           }
 
           // Broadcast collision event to all clients
@@ -1540,9 +2541,72 @@ function gameLoop() {
     }
   }
 
-  // Update premium orb rotations
+  // Update premium orbs - fleeing behavior and rotation
   premiumOrbs.forEach((orb) => {
+    // Update rotation for visual effect
     orb.rotation += 0.02;
+
+    // Calculate flee direction based on nearby players
+    let fleeVx = 0;
+    let fleeVy = 0;
+    let nearbyPlayerCount = 0;
+
+    players.forEach((player) => {
+      if (player.isDying) return;
+
+      const dx = orb.x - player.x;
+      const dy = orb.y - player.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // If player is within flee distance, calculate flee direction
+      if (distance < GAME_CONFIG.PREMIUM_ORB_FLEE_DISTANCE && distance > 0) {
+        // Flee away from player (normalized direction)
+        const fleeStrength = 1 - (distance / GAME_CONFIG.PREMIUM_ORB_FLEE_DISTANCE);
+        fleeVx += (dx / distance) * fleeStrength;
+        fleeVy += (dy / distance) * fleeStrength;
+        nearbyPlayerCount++;
+      }
+    });
+
+    // Apply flee velocity if there are nearby players
+    if (nearbyPlayerCount > 0) {
+      // Normalize the combined flee direction
+      const fleeMagnitude = Math.sqrt(fleeVx * fleeVx + fleeVy * fleeVy);
+      if (fleeMagnitude > 0) {
+        fleeVx = (fleeVx / fleeMagnitude) * GAME_CONFIG.PREMIUM_ORB_FLEE_SPEED;
+        fleeVy = (fleeVy / fleeMagnitude) * GAME_CONFIG.PREMIUM_ORB_FLEE_SPEED;
+      }
+
+      // Apply acceleration to current velocity (smooth movement)
+      orb.vx += (fleeVx - orb.vx) * 0.15;
+      orb.vy += (fleeVy - orb.vy) * 0.15;
+    } else {
+      // Apply damping when no players nearby (slow down gradually)
+      orb.vx *= 0.92;
+      orb.vy *= 0.92;
+    }
+
+    // Update position based on velocity
+    orb.x += orb.vx;
+    orb.y += orb.vy;
+
+    // Keep orb within map boundaries with soft bounce
+    const padding = orb.size;
+    if (orb.x < padding) {
+      orb.x = padding;
+      orb.vx = Math.abs(orb.vx) * 0.5; // Bounce with damping
+    } else if (orb.x > GAME_CONFIG.MAP_WIDTH - padding) {
+      orb.x = GAME_CONFIG.MAP_WIDTH - padding;
+      orb.vx = -Math.abs(orb.vx) * 0.5; // Bounce with damping
+    }
+
+    if (orb.y < padding) {
+      orb.y = padding;
+      orb.vy = Math.abs(orb.vy) * 0.5; // Bounce with damping
+    } else if (orb.y > GAME_CONFIG.MAP_HEIGHT - padding) {
+      orb.y = GAME_CONFIG.MAP_HEIGHT - padding;
+      orb.vy = -Math.abs(orb.vy) * 0.5; // Bounce with damping
+    }
   });
 
   // Broadcast game state to all clients
@@ -1553,6 +2617,9 @@ function gameLoop() {
       premiumOrbs: Array.from(premiumOrbs.values())
     });
   }
+
+  // Update global player count for status endpoint (exclude AI players)
+  global.playerCount = Array.from(players.values()).filter(p => !p.isAI).length;
 }
 
 // Start game loop

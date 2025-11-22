@@ -1,8 +1,53 @@
 import { useState, useEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import './App.css'
+import { audioManager } from './AudioManager'
+import { AudioSettings } from './AudioSettings'
+import { Settings, KeyBindings, getKeybindings } from './Settings'
+import { ServerSelector } from './ServerSelector'
+import { hapticManager } from './haptics'
+import { getNametagById, getSpikeById } from './customizations'
 
-type SpikeType = 'Spike' | 'Prickle' | 'Thorn' | 'Bristle' | 'Bulwark' | 'Starflare' | 'Mauler'
+// Loading screen tips
+const LOADING_TIPS = [
+  'Collect food orbs to grow bigger and stronger!',
+  'Premium orbs (glowing) give you more points!',
+  'Press B to use your speed boost ability',
+  'Press N to activate your special ability',
+  'Stay in your team\'s colored base to go AFK safely',
+  'Evolve at 1000 points to unlock tier 1 spikes',
+  'Each tier 1 spike has unique abilities and stats',
+  'Tier 2 evolutions unlock at 5000 points',
+  'Colliding with other players deals damage based on size',
+  'Bigger spikes deal more damage in collisions',
+  'Your health regenerates slowly over time',
+  'Press H to toggle the controls guide',
+  'Use chat to communicate with other players',
+  'Team bases provide a safe zone from attacks',
+  'Special abilities have cooldowns - use them wisely!',
+  'Some spikes are faster, others are tankier',
+  'Watch out for angry spikes - they\'re dangerous!',
+  'Premium orbs spawn randomly across the map',
+  'Evolution choices are permanent - choose carefully!',
+  'Coordinate with your team for better survival',
+]
+
+type SpikeType =
+  | 'Spike'
+  // Tier 1
+  | 'Prickle' | 'Thorn' | 'Bristle' | 'Bulwark' | 'Starflare' | 'Mauler'
+  // Tier 2 - Prickle variants
+  | 'PrickleVanguard' | 'PrickleSwarm' | 'PrickleBastion'
+  // Tier 2 - Thorn variants
+  | 'ThornWraith' | 'ThornReaper' | 'ThornShade'
+  // Tier 2 - Bristle variants
+  | 'BristleBlitz' | 'BristleStrider' | 'BristleSkirmisher'
+  // Tier 2 - Bulwark variants
+  | 'BulwarkAegis' | 'BulwarkCitadel' | 'BulwarkJuggernaut'
+  // Tier 2 - Starflare variants
+  | 'StarflarePulsar' | 'StarflareHorizon' | 'StarflareNova'
+  // Tier 2 - Mauler variants
+  | 'MaulerRavager' | 'MaulerBulwark' | 'MaulerApex'
 
 interface Player {
   id: string
@@ -29,9 +74,22 @@ interface Player {
   isAI?: boolean
   teamId?: string
   spikeType?: SpikeType
+  evolutionScoreOffset?: number
   abilityActive?: boolean
   abilityProgress?: number
   lastAbilityTime?: number
+  // Tier 2 ability-specific properties
+  damageTrail?: Array<{ x: number; y: number; timestamp: number; radius: number }>
+  novaExplosionX?: number
+  novaExplosionY?: number
+  novaExplosionTime?: number
+  shockwaveX?: number
+  shockwaveY?: number
+  shockwaveTime?: number
+  spineStormActive?: boolean
+  executionLungeActive?: boolean
+  // AFK properties
+  isAFK?: boolean
 }
 
 interface TeamBase {
@@ -68,6 +126,8 @@ interface PremiumOrb {
   id: string
   x: number
   y: number
+  vx?: number
+  vy?: number
   size: number
   rotation: number
   color: string
@@ -116,6 +176,7 @@ interface ChatMessage {
   timestamp: number
   teamId?: string | null
   teamColor?: string
+  isSystem?: boolean
 }
 
 
@@ -144,7 +205,7 @@ interface DeathStats {
   assists?: string[]
 }
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'https://burrs-io.onrender.com'
+const DEFAULT_SERVER_URL = import.meta.env.VITE_SERVER_URL || 'https://burrs-io.onrender.com'
 
 // Game constants (match server settings)
 const PLAYER_SIZE = 30 // Base size for spikes (reduced from 35 for smaller spawn size)
@@ -152,16 +213,19 @@ const PLAYER_SPEED = 5
 
 // Calculate size multiplier based on score (3x slower progression)
 // Score 0: 1x, Score 3000: 2x, Score 15000: 3x, Score 75000: 4x
-const getSizeMultiplier = (score: number): number => {
-  if (score < 3000) {
+const getSizeMultiplier = (score: number, evolutionScoreOffset: number = 0): number => {
+  // If player has evolved, calculate visual size based on score gained since evolution
+  const visualScore = Math.max(0, score - evolutionScoreOffset)
+
+  if (visualScore < 3000) {
     // 0-3000: interpolate from 1x to 2x
-    return 1 + (score / 3000)
-  } else if (score < 15000) {
+    return 1 + (visualScore / 3000)
+  } else if (visualScore < 15000) {
     // 3000-15000: interpolate from 2x to 3x
-    return 2 + ((score - 3000) / 12000)
-  } else if (score < 75000) {
+    return 2 + ((visualScore - 3000) / 12000)
+  } else if (visualScore < 75000) {
     // 15000-75000: interpolate from 3x to 4x
-    return 3 + ((score - 15000) / 60000)
+    return 3 + ((visualScore - 15000) / 60000)
   } else {
     // 75000+: cap at 4x
     return 4
@@ -179,7 +243,10 @@ const getRandomColor = () => {
 
 // Evolution configuration
 const EVOLUTION_THRESHOLD = 5000
-const EVOLUTION_OPTIONS = [
+const TIER_2_THRESHOLD = 15000
+
+// Tier 1 Evolution Options
+const TIER_1_OPTIONS = [
   {
     type: 'Prickle' as SpikeType,
     name: 'Prickle',
@@ -242,9 +309,352 @@ const EVOLUTION_OPTIONS = [
   },
 ]
 
+// Tier 2 Evolution Options - Prickle variants
+const TIER_2_PRICKLE_OPTIONS = [
+  {
+    type: 'PrickleVanguard' as SpikeType,
+    name: 'Prickle Vanguard',
+    description: 'Tankier Prickle that can dive and survive',
+    stats: { speed: 5, damage: 5, health: 5 },
+    ability: 'Overdensity',
+    abilityDescription: '2.2x damage + shield + 30% damage reduction for 2.5s',
+    abilityCooldown: 18000,
+    abilityDuration: 2500,
+  },
+  {
+    type: 'PrickleSwarm' as SpikeType,
+    name: 'Prickle Swarm',
+    description: 'More spikes and better contact DPS',
+    stats: { speed: 10, damage: 5, health: 0 },
+    ability: 'Spine Storm',
+    abilityDescription: 'Rapid contact damage ticks in short radius for 2s',
+    abilityCooldown: 18000,
+    abilityDuration: 2000,
+  },
+  {
+    type: 'PrickleBastion' as SpikeType,
+    name: 'Prickle Bastion',
+    description: 'Defensive Prickle; wins trades, slower',
+    stats: { speed: -5, damage: 10, health: 10 },
+    ability: 'Spine Bulwark',
+    abilityDescription: '50% damage reduction + 25% reflect for 2.5s',
+    abilityCooldown: 22000,
+    abilityDuration: 2500,
+  },
+]
+
+// Tier 2 Evolution Options - Thorn variants
+const TIER_2_THORN_OPTIONS = [
+  {
+    type: 'ThornWraith' as SpikeType,
+    name: 'Thorn Wraith',
+    description: 'Classic assassin — better Ghost',
+    stats: { speed: 5, damage: 5, health: 0 },
+    ability: 'Wraith Walk',
+    abilityDescription: 'Pass through spikes for 3.5s',
+    abilityCooldown: 27000,
+    abilityDuration: 3500,
+  },
+  {
+    type: 'ThornReaper' as SpikeType,
+    name: 'Thorn Reaper',
+    description: 'Burst finisher: big first hit',
+    stats: { speed: 5, damage: 10, health: -2 },
+    ability: 'Execution Lunge',
+    abilityDescription: 'Next hit +40% damage + slow for 3s',
+    abilityCooldown: 26000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'ThornShade' as SpikeType,
+    name: 'Thorn Shade',
+    description: 'Flanker with disengage',
+    stats: { speed: 10, damage: 5, health: 0 },
+    ability: 'Shadow Slip',
+    abilityDescription: 'Instant dash, phase through enemies',
+    abilityCooldown: 24000,
+    abilityDuration: 300,
+  },
+]
+
+// Tier 2 Evolution Options - Bristle variants
+const TIER_2_BRISTLE_OPTIONS = [
+  {
+    type: 'BristleBlitz' as SpikeType,
+    name: 'Bristle Blitz',
+    description: 'Pure chaser; faster boost',
+    stats: { speed: 10, damage: 5, health: 0 },
+    ability: 'Triple Rush',
+    abilityDescription: '2.3x speed for 3.5s',
+    abilityCooldown: 28000,
+    abilityDuration: 3500,
+  },
+  {
+    type: 'BristleStrider' as SpikeType,
+    name: 'Bristle Strider',
+    description: 'Mobility and sustained pressure',
+    stats: { speed: 5, damage: 5, health: 5 },
+    ability: 'Trailing Surge',
+    abilityDescription: '2x speed + damaging trail for 4s',
+    abilityCooldown: 32000,
+    abilityDuration: 4000,
+  },
+  {
+    type: 'BristleSkirmisher' as SpikeType,
+    name: 'Bristle Skirmisher',
+    description: 'More durable brawler, still mobile',
+    stats: { speed: 5, damage: 0, health: 8 },
+    ability: 'Kinetic Guard',
+    abilityDescription: '1.8x speed + 20% damage reduction for 3s',
+    abilityCooldown: 28000,
+    abilityDuration: 3000,
+  },
+]
+
+// Tier 2 Evolution Options - Bulwark variants
+const TIER_2_BULWARK_OPTIONS = [
+  {
+    type: 'BulwarkAegis' as SpikeType,
+    name: 'Bulwark Aegis',
+    description: 'Premium tank, stronger invuln',
+    stats: { speed: 5, damage: 5, health: 10 },
+    ability: 'Fortified Aegis',
+    abilityDescription: '3.5s invincibility + knockback resistance',
+    abilityCooldown: 32000,
+    abilityDuration: 3500,
+  },
+  {
+    type: 'BulwarkCitadel' as SpikeType,
+    name: 'Bulwark Citadel',
+    description: 'Zone controller near bases',
+    stats: { speed: 0, damage: 5, health: 15 },
+    ability: 'Bastion Field',
+    abilityDescription: 'Aura: 20% ally damage reduction + knockback for 3s',
+    abilityCooldown: 35000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'BulwarkJuggernaut' as SpikeType,
+    name: 'Bulwark Juggernaut',
+    description: 'Slow raid boss',
+    stats: { speed: 3, damage: 10, health: 10 },
+    ability: 'Unstoppable',
+    abilityDescription: 'Invincible + no slow/knockback for 3s',
+    abilityCooldown: 32000,
+    abilityDuration: 3000,
+  },
+]
+
+// Tier 2 Evolution Options - Starflare variants
+const TIER_2_STARFLARE_OPTIONS = [
+  {
+    type: 'StarflarePulsar' as SpikeType,
+    name: 'Starflare Pulsar',
+    description: 'More offensive teleport',
+    stats: { speed: 5, damage: 5, health: 0 },
+    ability: 'Offensive Warp',
+    abilityDescription: 'Teleport to base + shockwave on arrival',
+    abilityCooldown: 165000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'StarflareHorizon' as SpikeType,
+    name: 'Starflare Horizon',
+    description: 'More frequent reposition',
+    stats: { speed: 10, damage: 0, health: 5 },
+    ability: 'Short Blink',
+    abilityDescription: 'Short-range teleport in aim direction',
+    abilityCooldown: 45000,
+    abilityDuration: 2500,
+  },
+  {
+    type: 'StarflareNova' as SpikeType,
+    name: 'Starflare Nova',
+    description: 'AoE burst mage',
+    stats: { speed: 5, damage: 10, health: 0 },
+    ability: 'Nova Shift',
+    abilityDescription: 'Teleport + delayed explosion (0.7s)',
+    abilityCooldown: 60000,
+    abilityDuration: 2500,
+  },
+]
+
+// Tier 2 Evolution Options - Mauler variants
+const TIER_2_MAULER_OPTIONS = [
+  {
+    type: 'MaulerRavager' as SpikeType,
+    name: 'Mauler Ravager',
+    description: 'Pure aggression',
+    stats: { speed: 5, damage: 10, health: 0 },
+    ability: 'Rend',
+    abilityDescription: 'Each hit applies bleed (extra damage over 2s) for 3s',
+    abilityCooldown: 55000,
+    abilityDuration: 3000,
+  },
+  {
+    type: 'MaulerBulwark' as SpikeType,
+    name: 'Mauler Bulwark',
+    description: 'Offensive tank hybrid',
+    stats: { speed: 0, damage: 5, health: 10 },
+    ability: 'Fortified Fortress',
+    abilityDescription: '35% damage reduction + thorns for 3.5s',
+    abilityCooldown: 65000,
+    abilityDuration: 3500,
+  },
+  {
+    type: 'MaulerApex' as SpikeType,
+    name: 'Mauler Apex',
+    description: 'High-risk, high-reward finisher',
+    stats: { speed: 8, damage: 12, health: 0 },
+    ability: 'Blood Frenzy',
+    abilityDescription: '+25% damage, +15% speed, +15% damage taken for 4s',
+    abilityCooldown: 60000,
+    abilityDuration: 4000,
+  },
+]
+
+// Combined evolution options (for ability HUD / cooldown, includes Tier 1 and Tier 2)
+const EVOLUTION_OPTIONS = [
+  ...TIER_1_OPTIONS,
+  ...TIER_2_PRICKLE_OPTIONS,
+  ...TIER_2_THORN_OPTIONS,
+  ...TIER_2_BRISTLE_OPTIONS,
+  ...TIER_2_BULWARK_OPTIONS,
+  ...TIER_2_STARFLARE_OPTIONS,
+  ...TIER_2_MAULER_OPTIONS,
+]
+
+const getAbilityDisplayConfig = (spikeType: SpikeType | null | undefined) => {
+  if (!spikeType) {
+    return { name: 'Ability', label: 'Ability' }
+  }
+  const config = EVOLUTION_OPTIONS.find(opt => opt.type === spikeType)
+  if (!config) {
+    return { name: 'Ability', label: 'Ability' }
+  }
+  const baseName = config.ability
+  const durationMs = config.abilityDuration
+  if (!durationMs || durationMs < 1000) {
+    return { name: baseName, label: baseName }
+  }
+  const seconds = durationMs / 1000
+  const formatted = seconds % 1 === 0 ? `${seconds.toFixed(0)}s` : `${seconds.toFixed(1)}s`
+  return { name: baseName, label: `${baseName} ${formatted}` }
+}
+
 // Food tier configuration is defined on the server side
 
 // Food generation is now handled server-side
+
+// Draw spike visual effects (glow, particles, etc.)
+const drawSpikeEffects = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  spikeEffectId: string
+) => {
+  const spikeCustomization = getSpikeById(spikeEffectId)
+  if (!spikeCustomization || spikeCustomization.effect.type === 'none') return
+
+  const effect = spikeCustomization.effect
+
+  ctx.save()
+
+  switch (effect.type) {
+    case 'glow':
+      // Draw glowing outline
+      ctx.shadowColor = effect.color || '#00ffff'
+      ctx.shadowBlur = effect.intensity || 15
+      ctx.strokeStyle = effect.color || '#00ffff'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(x, y, size + 5, 0, Math.PI * 2)
+      ctx.stroke()
+      break
+
+    case 'trail':
+      // Trail effect is handled separately in the game loop
+      break
+
+    case 'particles':
+      // Draw simple particle effect
+      const particleCount = effect.count || 5
+      const time = Date.now() / 1000
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2 + time
+        const distance = size + 10 + Math.sin(time * 2 + i) * 5
+        const px = x + Math.cos(angle) * distance
+        const py = y + Math.sin(angle) * distance
+
+        ctx.fillStyle = effect.color || '#ffff00'
+        ctx.shadowColor = effect.color || '#ffff00'
+        ctx.shadowBlur = 10
+        ctx.beginPath()
+        ctx.arc(px, py, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      break
+
+    case 'electric':
+      // Draw electric bolts
+      const bolts = effect.bolts || 3
+      const boltTime = Date.now() / 100
+      for (let i = 0; i < bolts; i++) {
+        const angle = (i / bolts) * Math.PI * 2 + boltTime
+        const startX = x + Math.cos(angle) * (size * 0.5)
+        const startY = y + Math.sin(angle) * (size * 0.5)
+        const endX = x + Math.cos(angle) * (size + 15)
+        const endY = y + Math.sin(angle) * (size + 15)
+
+        ctx.strokeStyle = effect.color || '#00d4ff'
+        ctx.shadowColor = effect.color || '#00d4ff'
+        ctx.shadowBlur = 8
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(startX, startY)
+        ctx.lineTo(endX, endY)
+        ctx.stroke()
+      }
+      break
+
+    case 'cosmic':
+      // Draw swirling cosmic energy
+      const colors = effect.colors || ['#b000ff', '#ff00ff', '#00ffff']
+      const cosmicTime = Date.now() / 1000
+      const rings = 3
+
+      for (let ring = 0; ring < rings; ring++) {
+        const ringRadius = size + 10 + ring * 8
+        const colorIndex = ring % colors.length
+        const rotation = effect.rotation ? cosmicTime + ring : 0
+
+        ctx.strokeStyle = colors[colorIndex]
+        ctx.shadowColor = colors[colorIndex]
+        ctx.shadowBlur = 12
+        ctx.lineWidth = 2
+        ctx.globalAlpha = 0.6
+
+        ctx.beginPath()
+        for (let i = 0; i <= 8; i++) {
+          const angle = (i / 8) * Math.PI * 2 + rotation
+          const r = ringRadius + Math.sin(angle * 3 + cosmicTime) * 5
+          const px = x + Math.cos(angle) * r
+          const py = y + Math.sin(angle) * r
+
+          if (i === 0) {
+            ctx.moveTo(px, py)
+          } else {
+            ctx.lineTo(px, py)
+          }
+        }
+        ctx.stroke()
+      }
+      break
+  }
+
+  ctx.restore()
+}
 
 // Draw a spike using Canvas2D
 const drawSpike = (
@@ -291,6 +701,7 @@ const drawSpike = (
 
   // Customize spike pattern based on type
   switch (spikeType) {
+    // Tier 1
     case 'Prickle': // Many short spikes
       spikes = 16
       outerRadius = size * 1.15
@@ -321,6 +732,109 @@ const drawSpike = (
       outerRadius = size * 1.45
       innerRadius = size * 0.75
       break
+
+    // Tier 2 - Prickle variants
+    case 'PrickleVanguard': // Tankier with denser spikes
+      spikes = 18
+      outerRadius = size * 1.22
+      innerRadius = size * 0.88
+      break
+    case 'PrickleSwarm': // Even more spikes - very dense
+      spikes = 24
+      outerRadius = size * 1.10
+      innerRadius = size * 0.90
+      break
+    case 'PrickleBastion': // Thicker defensive spikes - fewer but thicker
+      spikes = 12
+      outerRadius = size * 1.25
+      innerRadius = size * 0.93
+      break
+
+    // Tier 2 - Thorn variants
+    case 'ThornWraith': // Longer, thinner spikes - ethereal
+      spikes = 6
+      outerRadius = size * 1.80
+      innerRadius = size * 0.65
+      break
+    case 'ThornReaper': // Aggressive long spikes - executioner
+      spikes = 4
+      outerRadius = size * 1.95
+      innerRadius = size * 0.60
+      break
+    case 'ThornShade': // Fast, sleek spikes - more spikes for speed
+      spikes = 8
+      outerRadius = size * 1.60
+      innerRadius = size * 0.75
+      break
+
+    // Tier 2 - Bristle variants
+    case 'BristleBlitz': // Streamlined for speed - fewer, longer spikes
+      spikes = 10
+      outerRadius = size * 1.35
+      innerRadius = size * 0.84
+      break
+    case 'BristleStrider': // Balanced dense spikes - medium count
+      spikes = 14
+      outerRadius = size * 1.24
+      innerRadius = size * 0.86
+      break
+    case 'BristleSkirmisher': // Durable medium spikes - more defensive
+      spikes = 16
+      outerRadius = size * 1.20
+      innerRadius = size * 0.89
+      break
+
+    // Tier 2 - Bulwark variants
+    case 'BulwarkAegis': // Premium tank spikes - balanced defense
+      spikes = 8
+      outerRadius = size * 1.24
+      innerRadius = size * 0.91
+      break
+    case 'BulwarkCitadel': // Zone control spikes - more spikes for area control
+      spikes = 10
+      outerRadius = size * 1.22
+      innerRadius = size * 0.90
+      break
+    case 'BulwarkJuggernaut': // Massive blunt spikes - fewer, thicker
+      spikes = 5
+      outerRadius = size * 1.28
+      innerRadius = size * 0.94
+      break
+
+    // Tier 2 - Starflare variants
+    case 'StarflarePulsar': // Explosive star pattern - medium spikes
+      spikes = 16
+      outerRadius = size * 1.48
+      innerRadius = size * 0.78
+      break
+    case 'StarflareHorizon': // Sleek teleporter - balanced
+      spikes = 20
+      outerRadius = size * 1.38
+      innerRadius = size * 0.82
+      break
+    case 'StarflareNova': // Burst mage pattern - MANY thin spikes
+      spikes = 28
+      outerRadius = size * 1.42
+      innerRadius = size * 0.80
+      break
+
+    // Tier 2 - Mauler variants
+    case 'MaulerRavager': // Aggressive jagged - more spikes for aggression
+      spikes = 9
+      outerRadius = size * 1.52
+      innerRadius = size * 0.70
+      break
+    case 'MaulerBulwark': // Defensive jagged - fewer, thicker
+      spikes = 6
+      outerRadius = size * 1.40
+      innerRadius = size * 0.80
+      break
+    case 'MaulerApex': // High-risk high-reward - extreme spikes
+      spikes = 10
+      outerRadius = size * 1.58
+      innerRadius = size * 0.65
+      break
+
     default: // Spike (default)
       spikes = 8
       outerRadius = size * 1.29
@@ -331,8 +845,8 @@ const drawSpike = (
   for (let i = 0; i < spikes * 2; i++) {
     let radius = i % 2 === 0 ? outerRadius : innerRadius
 
-    // Add irregularity for Mauler - more pronounced variation
-    if (spikeType === 'Mauler' && i % 2 === 0) {
+    // Add irregularity for Mauler variants - more pronounced variation
+    if ((spikeType === 'Mauler' || spikeType === 'MaulerRavager' || spikeType === 'MaulerBulwark' || spikeType === 'MaulerApex') && i % 2 === 0) {
       radius *= 0.8 + Math.sin(i * 2.3) * 0.25 // More dramatic spike length variation
     }
 
@@ -1217,7 +1731,6 @@ const drawLeaderboard = (
     const rowY = y + headerHeight + index * rowHeight
     const isLocalPlayer = player.id === localPlayerId
     const isTopThree = index < 3
-    const localColor = player.color || '#ffd700'
 
     // Special highlight for top 3
     if (isTopThree) {
@@ -1249,9 +1762,10 @@ const drawLeaderboard = (
       ctx.fillText(`${index + 1}`, x + 15, rowY + rowHeight / 2)
     }
 
-    // Player name
+    // Player name - show in their team color
     ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.fillStyle = isLocalPlayer ? localColor : (isTopThree ? '#ffffff' : 'rgba(255, 255, 255, 0.9)')
+    const playerColor = player.color || '#ffd700'
+    ctx.fillStyle = playerColor
     const maxNameWidth = 120
     let displayName = player.username
     ctx.textAlign = 'left'
@@ -1268,9 +1782,9 @@ const drawLeaderboard = (
 
     ctx.fillText(displayName, x + 45, rowY + rowHeight / 2)
 
-    // Score
+    // Score - show in their team color
     ctx.font = '700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.fillStyle = isLocalPlayer ? localColor : (isTopThree ? '#ffd700' : 'rgba(255, 255, 255, 0.9)')
+    ctx.fillStyle = playerColor
     ctx.textAlign = 'right'
     ctx.fillText(player.score.toLocaleString(), x + width - 15, rowY + rowHeight / 2)
   })
@@ -1694,82 +2208,28 @@ const EvolutionOption: React.FC<{
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-      // Draw rotating spike
+      // Draw rotating spike using the same helper as in-game so Tier 1 and Tier 2 previews match
       const centerX = canvas.width / 2
       const centerY = canvas.height / 2
       const size = 40
 
-      ctx.save()
-      ctx.translate(centerX, centerY)
-      ctx.rotate(rotationRef.current)
-
-      // Draw spike pattern
-      let outerRadius = size * 1.29
-      let innerRadius = size * 0.83
-      let spikes = 8
-
-      switch (option.type) {
-        case 'Prickle':
-          spikes = 16
-          outerRadius = size * 1.15
-          innerRadius = size * 0.88
-          break
-        case 'Thorn':
-          spikes = 5
-          outerRadius = size * 1.7
-          innerRadius = size * 0.7
-          break
-        case 'Bristle':
-          spikes = 12
-          outerRadius = size * 1.25
-          innerRadius = size * 0.85
-          break
-        case 'Bulwark':
-          spikes = 6
-          outerRadius = size * 1.2
-          innerRadius = size * 0.9
-          break
-        case 'Starflare':
-          spikes = 20
-          outerRadius = size * 1.4
-          innerRadius = size * 0.82
-          break
-        case 'Mauler':
-          spikes = 7
-          outerRadius = size * 1.45
-          innerRadius = size * 0.75
-          break
-      }
-
-      // Draw white spikes
-      ctx.beginPath()
-      for (let i = 0; i < spikes * 2; i++) {
-        let radius = i % 2 === 0 ? outerRadius : innerRadius
-
-        if (option.type === 'Mauler' && i % 2 === 0) {
-          radius *= 0.8 + Math.sin(i * 2.3) * 0.25
-        }
-
-        const angle = (Math.PI * i) / spikes
-        const px = Math.cos(angle) * radius
-        const py = Math.sin(angle) * radius
-        if (i === 0) {
-          ctx.moveTo(px, py)
-        } else {
-          ctx.lineTo(px, py)
-        }
-      }
-      ctx.closePath()
-      ctx.fillStyle = '#ffffff'
-      ctx.fill()
-
-      // Draw colored body
-      ctx.beginPath()
-      ctx.arc(0, 0, size, 0, Math.PI * 2)
-      ctx.fillStyle = '#4a9eff'
-      ctx.fill()
-
-      ctx.restore()
+      drawSpike(
+        ctx,
+        centerX,
+        centerY,
+        size,
+        rotationRef.current,
+        '#4a9eff',
+        undefined,
+        0,
+        100,
+        0,
+        0,
+        true,
+        false,
+        option.type as SpikeType,
+        1,
+      )
 
       animationId = requestAnimationFrame(animate)
     }
@@ -1822,6 +2282,140 @@ const EvolutionOption: React.FC<{
   )
 }
 
+// Draw spawn particle effects
+const drawSpawnEffects = (
+  ctx: CanvasRenderingContext2D,
+  effects: Array<{ x: number; y: number; startTime: number; duration: number }>
+) => {
+  const currentTime = Date.now()
+
+  effects.forEach((effect) => {
+    const elapsed = currentTime - effect.startTime
+    const progress = Math.min(elapsed / effect.duration, 1)
+
+    if (progress < 1) {
+      ctx.save()
+
+      const opacity = 1 - progress
+      const radius = 20 + progress * 60
+
+      // Expanding ring
+      const gradient = ctx.createRadialGradient(effect.x, effect.y, radius * 0.5, effect.x, effect.y, radius)
+      gradient.addColorStop(0, `rgba(0, 255, 200, ${opacity * 0.6})`)
+      gradient.addColorStop(1, `rgba(0, 255, 200, 0)`)
+
+      ctx.fillStyle = gradient
+      ctx.beginPath()
+      ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Particles bursting outward
+      const particleCount = 12
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2
+        const dist = progress * 50
+        const px = effect.x + Math.cos(angle) * dist
+        const py = effect.y + Math.sin(angle) * dist
+
+        ctx.fillStyle = `rgba(0, 255, 200, ${opacity})`
+        ctx.beginPath()
+        ctx.arc(px, py, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.restore()
+    }
+  })
+
+  // Remove completed effects
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const elapsed = currentTime - effects[i].startTime
+    if (elapsed >= effects[i].duration) {
+      effects.splice(i, 1)
+    }
+  }
+}
+
+// Draw ability activation particle effects
+const drawAbilityEffects = (
+  ctx: CanvasRenderingContext2D,
+  effects: Array<{ x: number; y: number; startTime: number; duration: number; spikeType: SpikeType }>
+) => {
+  const currentTime = Date.now()
+
+  effects.forEach((effect) => {
+    const elapsed = currentTime - effect.startTime
+    const progress = Math.min(elapsed / effect.duration, 1)
+
+    if (progress < 1) {
+      ctx.save()
+
+      const opacity = 1 - progress
+      const radius = 30 + progress * 70
+
+      // Different colors based on spike type (Tier 1 and Tier 2 variants share a palette per line)
+      let color1 = '255, 100, 0'
+      let color2 = '255, 200, 0'
+
+      const type = effect.spikeType
+      if (type === 'Prickle' || type === 'PrickleVanguard' || type === 'PrickleSwarm' || type === 'PrickleBastion') {
+        color1 = '255, 100, 0'
+        color2 = '255, 200, 0'
+      } else if (type === 'Thorn' || type === 'ThornWraith' || type === 'ThornShade') {
+        color1 = '200, 0, 255'
+        color2 = '255, 0, 255'
+      } else if (type === 'Bristle' || type === 'BristleBlitz' || type === 'BristleStrider' || type === 'BristleSkirmisher') {
+        color1 = '0, 200, 255'
+        color2 = '0, 255, 255'
+      } else if (type === 'Bulwark' || type === 'BulwarkAegis' || type === 'BulwarkCitadel' || type === 'BulwarkJuggernaut') {
+        color1 = '100, 100, 255'
+        color2 = '150, 150, 255'
+      } else if (type === 'Starflare' || type === 'StarflarePulsar' || type === 'StarflareHorizon' || type === 'StarflareNova') {
+        color1 = '255, 255, 0'
+        color2 = '255, 200, 100'
+      } else if (type === 'Mauler' || type === 'MaulerRavager' || type === 'MaulerBulwark' || type === 'MaulerApex') {
+        color1 = '255, 0, 100'
+        color2 = '255, 100, 150'
+      }
+
+      // Expanding burst
+      const gradient = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, radius)
+      gradient.addColorStop(0, `rgba(${color1}, ${opacity * 0.8})`)
+      gradient.addColorStop(0.5, `rgba(${color2}, ${opacity * 0.4})`)
+      gradient.addColorStop(1, `rgba(${color2}, 0)`)
+
+      ctx.fillStyle = gradient
+      ctx.beginPath()
+      ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Rotating particles
+      const particleCount = 16
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2 + progress * Math.PI * 4
+        const dist = 20 + Math.sin(progress * Math.PI) * 30
+        const px = effect.x + Math.cos(angle) * dist
+        const py = effect.y + Math.sin(angle) * dist
+
+        ctx.fillStyle = `rgba(${color1}, ${opacity})`
+        ctx.beginPath()
+        ctx.arc(px, py, 4, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.restore()
+    }
+  })
+
+  // Remove completed effects
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const elapsed = currentTime - effects[i].startTime
+    if (elapsed >= effects[i].duration) {
+      effects.splice(i, 1)
+    }
+  }
+}
+
 function App() {
   const [displayName, setDisplayName] = useState('')
   const [gameState, setGameState] = useState<GameState>('menu')
@@ -1832,7 +2426,47 @@ function App() {
   const [isChatOpen, setIsChatOpen] = useState(true)
   const [showEvolutionTree, setShowEvolutionTree] = useState(false)
   const [hasEvolved, setHasEvolved] = useState(false)
+  const [tier2Evolved, setTier2Evolved] = useState(false)
   const [currentSpikeType, setCurrentSpikeType] = useState<SpikeType>('Spike')
+  const [showAudioSettings, setShowAudioSettings] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showControlsGuide, setShowControlsGuide] = useState(false)
+  const [showHowToPlay, setShowHowToPlay] = useState(false)
+  const [tutorialStep, setTutorialStep] = useState(0)
+  // AFK state
+  const [isAFK, setIsAFK] = useState(false)
+  const [afkActivationProgress, setAfkActivationProgress] = useState(0)
+  // Reconnection state
+  const [isReconnected, setIsReconnected] = useState(false)
+  const [showDisconnectScreen, setShowDisconnectScreen] = useState(false)
+  // Loading screen state
+  const [loadingTip, setLoadingTip] = useState('')
+  // Keybindings state
+  const [keybindings, setKeybindings] = useState<KeyBindings>(getKeybindings())
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [currentUser, setCurrentUser] = useState<{ username: string; id: string } | null>(null)
+  const [showSignUp, setShowSignUp] = useState(false)
+  const [showLogin, setShowLogin] = useState(false)
+  const [showAuthSettings, setShowAuthSettings] = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [authNotification, setAuthNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  // Server selection state
+  const [showServerSelector, setShowServerSelector] = useState(false)
+  const [selectedServerUrl, setSelectedServerUrl] = useState<string>(DEFAULT_SERVER_URL)
+
+  // Customizations state
+  const [showCustomizations, setShowCustomizations] = useState(false)
+  const [customizationsTab, setCustomizationsTab] = useState<'nametags' | 'spikes'>('nametags')
+  const [premiumOrbs, setPremiumOrbs] = useState(0)
+  const [ownedCustomizations, setOwnedCustomizations] = useState<string[]>([])
+  const [activeNametag, setActiveNametag] = useState<string | null>(null)
+  const [activeSpike, setActiveSpike] = useState<string | null>(null)
+  const [availableCustomizations, setAvailableCustomizations] = useState<any>(null)
+
+  const hasEvolvedRef = useRef(false)
+  const tier2EvolvedRef = useRef(false)
   // Health and score are now managed server-side and received via player object
   const chatLogRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<HTMLInputElement | null>(null)
@@ -1843,7 +2477,7 @@ function App() {
   const localPlayerIdRef = useRef<string | null>(null)
   const keysRef = useRef({ w: false, a: false, s: false, d: false })
   const backgroundSpikesRef = useRef<Player[]>([])
-  const mapConfigRef = useRef<MapConfig>({ width: 4000, height: 4000 })
+  const mapConfigRef = useRef<MapConfig>({ width: 8000, height: 8000 })
   const animationFrameRef = useRef<number | null>(null)
   const foodRef = useRef<Food[]>([])
   const premiumOrbsRef = useRef<PremiumOrb[]>([])
@@ -1863,6 +2497,7 @@ function App() {
   const [joystickActive, setJoystickActive] = useState(false)
   const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null)
   const [joystickVector, setJoystickVector] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [isPortrait, setIsPortrait] = useState(false)
 
   // Detect touch-capable devices for mobile/iPad controls
   useEffect(() => {
@@ -1870,6 +2505,37 @@ function App() {
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || (navigator as any).msMaxTouchPoints > 0
     setIsTouchDevice(hasTouch)
   }, [])
+
+	  // Track orientation for touch devices (used to enforce landscape on mobile/tablet)
+	  useEffect(() => {
+	    const updateOrientation = () => {
+	      if (typeof window === 'undefined') return
+	      const { innerWidth, innerHeight } = window
+	      setIsPortrait(innerHeight > innerWidth)
+	    }
+
+	    updateOrientation()
+
+	    window.addEventListener('resize', updateOrientation)
+	    window.addEventListener('orientationchange', updateOrientation as any)
+
+	    return () => {
+	      window.removeEventListener('resize', updateOrientation)
+	      window.removeEventListener('orientationchange', updateOrientation as any)
+	    }
+	  }, [])
+
+	  // Attempt to lock orientation to landscape on supported mobile browsers
+	  useEffect(() => {
+	    if (!isTouchDevice) return
+	    const orientation = (screen as any).orientation
+	    if (orientation && typeof orientation.lock === 'function') {
+	      orientation.lock('landscape').catch(() => {
+	        // Ignore errors (unsupported or not in fullscreen)
+	      })
+	    }
+	  }, [isTouchDevice])
+
 
   // Map joystick vector into keyboard-like input flags
   const applyJoystickToInput = () => {
@@ -1938,6 +2604,32 @@ function App() {
 
   // Camera position for smooth interpolation
   const cameraRef = useRef({ x: 0, y: 0 })
+
+  // Screen shake state
+  const screenShakeRef = useRef({ x: 0, y: 0, intensity: 0, startTime: 0, duration: 0 })
+
+  // Camera zoom based on player size
+  const cameraZoomRef = useRef(1)
+
+  // Spawn particle effects
+  const spawnEffectsRef = useRef<Array<{
+    x: number
+    y: number
+    startTime: number
+    duration: number
+  }>>([])
+
+  // Ability activation particle effects
+  const abilityEffectsRef = useRef<Array<{
+    x: number
+    y: number
+    startTime: number
+    duration: number
+    spikeType: SpikeType
+  }>>([])
+
+  // Damage flash effect for local player
+  const damageFlashRef = useRef({ active: false, startTime: 0, duration: 200 })
 
   // Initialize Canvas
   useEffect(() => {
@@ -2098,8 +2790,8 @@ function App() {
 
       const key = e.key.toLowerCase()
 
-      // Press Enter to open/focus chat while playing
-      if (key === 'enter') {
+      // Press chat key to open/focus chat while playing
+      if (key === keybindings.chat.toLowerCase()) {
         setIsChatOpen(true)
         setTimeout(() => {
           if (chatInputRef.current) {
@@ -2116,38 +2808,56 @@ function App() {
         return
       }
 
-      if (key === 'w' || key === 'arrowup') {
+      if (key === keybindings.moveUp.toLowerCase() || key === 'arrowup') {
         keysRef.current.w = true
         e.preventDefault()
       }
-      if (key === 'a' || key === 'arrowleft') {
+      if (key === keybindings.moveLeft.toLowerCase() || key === 'arrowleft') {
         keysRef.current.a = true
         e.preventDefault()
       }
-      if (key === 's' || key === 'arrowdown') {
+      if (key === keybindings.moveDown.toLowerCase() || key === 'arrowdown') {
         keysRef.current.s = true
         e.preventDefault()
       }
-      if (key === 'd' || key === 'arrowright') {
+      if (key === keybindings.moveRight.toLowerCase() || key === 'arrowright') {
         keysRef.current.d = true
         e.preventDefault()
       }
-      if (key === 'b') {
+      if (key === keybindings.speedBoost.toLowerCase()) {
         if (!e.repeat) {
           triggerSpeedBoost()
         }
         e.preventDefault()
       }
-      if (key === 'n') {
+      if (key === keybindings.specialAbility.toLowerCase()) {
         if (!e.repeat) {
           triggerAbility()
         }
         e.preventDefault()
       }
-      // Debug hack: Z key sets score to 4999
-      if (key === 'z') {
+      // Debug hack: X key adds 10000 points
+      if (key === 'x') {
         if (!e.repeat && socketRef.current) {
-          socketRef.current.emit('debugSetScore', 4999)
+          socketRef.current.emit('debugAddScore', 10000)
+        }
+        e.preventDefault()
+      }
+
+      // Controls guide toggle
+      if (key === keybindings.controlsGuide.toLowerCase()) {
+        if (!e.repeat) {
+          setShowControlsGuide(prev => !prev)
+          audioManager.playSFX('uiClick')
+        }
+        e.preventDefault()
+      }
+
+      // AFK mode toggle
+      if (key === keybindings.afkToggle.toLowerCase()) {
+        if (!e.repeat && socketRef.current) {
+          socketRef.current.emit('toggleAFK')
+          audioManager.playSFX('uiClick')
         }
         e.preventDefault()
       }
@@ -2161,19 +2871,19 @@ function App() {
       }
 
       const key = e.key.toLowerCase()
-      if (key === 'w' || key === 'arrowup') {
+      if (key === keybindings.moveUp.toLowerCase() || key === 'arrowup') {
         keysRef.current.w = false
         e.preventDefault()
       }
-      if (key === 'a' || key === 'arrowleft') {
+      if (key === keybindings.moveLeft.toLowerCase() || key === 'arrowleft') {
         keysRef.current.a = false
         e.preventDefault()
       }
-      if (key === 's' || key === 'arrowdown') {
+      if (key === keybindings.moveDown.toLowerCase() || key === 'arrowdown') {
         keysRef.current.s = false
         e.preventDefault()
       }
-      if (key === 'd' || key === 'arrowright') {
+      if (key === keybindings.moveRight.toLowerCase() || key === 'arrowright') {
         keysRef.current.d = false
         e.preventDefault()
       }
@@ -2186,16 +2896,14 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [gameState])
+  }, [gameState, keybindings])
 
   // Socket.IO connection - connect once when leaving menu
   useEffect(() => {
     if (gameState === 'menu') {
-      // Disconnect if we're back at menu
-      if (socketRef.current) {
-        socketRef.current.disconnect()
-        socketRef.current = null
-      }
+      // DON'T disconnect when going to menu - keep the socket alive
+      // This allows the user to stay authenticated and prevents the "Disconnected" error
+      // The socket will only disconnect when the user explicitly logs out
       return
     }
 
@@ -2203,13 +2911,32 @@ function App() {
     if (socketRef.current) return
 
     console.log('Connecting to server...')
-    const socket = io(SERVER_URL)
+
+    // Get auth token if available
+    const authToken = localStorage.getItem('authToken')
+
+    // Create socket connection with auth token
+    const socket = io(selectedServerUrl, {
+      auth: authToken ? { token: authToken } : undefined
+    })
     socketRef.current = socket
 
     socket.on('connect', () => {
       console.log('Connected to server')
-      // Send join request with username
-      socket.emit('join', displayName)
+
+      // When reconnecting from a closed tab within the 60s window, the
+      // server will restore our previous spike based on the username we
+      // send here. Using the same displayName is what makes reconnection
+      // behave like "respawn back into the same spike".
+      // Also send active customizations from localStorage
+      const storedNametag = localStorage.getItem('activeNametag') || 'nametag_default'
+      const storedSpike = localStorage.getItem('activeSpike') || 'spike_default'
+
+      socket.emit('join', {
+        username: displayName,
+        activeNametag: storedNametag,
+        activeSpike: storedSpike
+      })
     })
 
     socket.on('init', (data: {
@@ -2218,10 +2945,50 @@ function App() {
       players: Player[];
       food: Food[];
       premiumOrbs: PremiumOrb[];
-      mapConfig: MapConfig
+      mapConfig: MapConfig;
+      reconnected?: boolean;
     }) => {
       localPlayerIdRef.current = data.playerId
       mapConfigRef.current = data.mapConfig
+
+      // Successful init means we are now fully in the game.
+      // If we were in the "connecting" state, advance to "playing".
+      setGameState('playing')
+
+      // Check if this is a reconnection
+      if (data.reconnected) {
+        setIsReconnected(true)
+        setShowDisconnectScreen(false)
+
+        // Restore evolution state from reconnected player
+        const localPlayer = data.players.find((p) => p.id === data.playerId)
+        if (localPlayer) {
+          const spikeType = (localPlayer as any).spikeType || 'Spike'
+          const hasEvolvedState = (localPlayer as any).hasEvolved || false
+          const tier2EvolvedState = (localPlayer as any).tier2Evolved || false
+
+          console.log(`🔄 Restoring evolution state: ${spikeType}, hasEvolved: ${hasEvolvedState}, tier2Evolved: ${tier2EvolvedState}`)
+
+          setCurrentSpikeType(spikeType)
+          setHasEvolved(hasEvolvedState)
+          setTier2Evolved(tier2EvolvedState)
+          hasEvolvedRef.current = hasEvolvedState
+          tier2EvolvedRef.current = tier2EvolvedState
+        }
+
+        // Show reconnection notification
+        notificationsRef.current.push({
+          id: Math.random().toString(36).substring(2, 11),
+          message: 'WELCOME BACK! RESUMING YOUR GAME...',
+          timestamp: Date.now(),
+          opacity: 1,
+        })
+
+        // Hide notification after 3 seconds
+        setTimeout(() => {
+          setIsReconnected(false)
+        }, 3000)
+      }
 
       // Reset camera to local player position to avoid jitter/shaking on spawn/respawn
       const canvas = canvasRef.current
@@ -2231,6 +2998,19 @@ function App() {
           // Center camera directly on the player at spawn/respawn
           cameraRef.current.x = localPlayer.x - canvas.width / 2
           cameraRef.current.y = localPlayer.y - canvas.height / 2
+
+          // Add spawn particle effect only if not reconnecting
+          if (!data.reconnected) {
+            spawnEffectsRef.current.push({
+              x: localPlayer.x,
+              y: localPlayer.y,
+              startTime: Date.now(),
+              duration: 800
+            })
+
+            // Play spawn sound
+            audioManager.playSFX('spawn')
+          }
         }
       }
 
@@ -2295,7 +3075,7 @@ function App() {
         if (player && scoreDiff > 0) {
           // Position popup just above the username badge
           const playerScoreForSize = player.score || newScore || 0
-          const sizeMultiplier = getSizeMultiplier(playerScoreForSize)
+          const sizeMultiplier = getSizeMultiplier(playerScoreForSize, player.evolutionScoreOffset || 0)
           const scaledSize = PLAYER_SIZE * sizeMultiplier
           const sizeScale = scaledSize / 30
           const badgeHeight = 22 * sizeScale
@@ -2313,6 +3093,9 @@ function App() {
             // Neon blue color for all +score popups
             color: '#00e5ff'
           })
+
+          // Play eat food sound effect
+          audioManager.playSFX('eatFood')
         }
       }
 
@@ -2320,8 +3103,18 @@ function App() {
       playerScoresRef.current.set(data.playerId, newScore)
 
       // Check if local player reached evolution threshold
-      if (data.playerId === localPlayerIdRef.current && !hasEvolved && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
-        setShowEvolutionTree(true)
+      if (data.playerId === localPlayerIdRef.current) {
+        const hasEvolvedNow = hasEvolvedRef.current
+        const tier2EvolvedNow = tier2EvolvedRef.current
+
+        // Tier 1 evolution
+        if (!hasEvolvedNow && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
+          setShowEvolutionTree(true)
+        }
+        // Tier 2 evolution
+        if (hasEvolvedNow && !tier2EvolvedNow && newScore >= TIER_2_THRESHOLD && prevScore < TIER_2_THRESHOLD) {
+          setShowEvolutionTree(true)
+        }
       }
     })
 
@@ -2338,7 +3131,7 @@ function App() {
         if (player && scoreDiff > 0) {
           // Position popup just above the username badge (same as food popups)
           const playerScoreForSize = player.score || newScore || 0
-          const sizeMultiplier = getSizeMultiplier(playerScoreForSize)
+          const sizeMultiplier = getSizeMultiplier(playerScoreForSize, player.evolutionScoreOffset || 0)
           const scaledSize = PLAYER_SIZE * sizeMultiplier
           const sizeScale = scaledSize / 30
           const badgeHeight = 22 * sizeScale
@@ -2365,14 +3158,27 @@ function App() {
           timestamp: Date.now(),
           opacity: 1
         })
+
+        // Play premium orb sound effect
+        audioManager.playSFX('premiumOrb')
       }
 
       // Update player score for tracking
       playerScoresRef.current.set(data.playerId, newScore)
 
       // Check if local player reached evolution threshold
-      if (data.playerId === localPlayerIdRef.current && !hasEvolved && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
-        setShowEvolutionTree(true)
+      if (data.playerId === localPlayerIdRef.current) {
+        const hasEvolvedNow = hasEvolvedRef.current
+        const tier2EvolvedNow = tier2EvolvedRef.current
+
+        // Tier 1 evolution
+        if (!hasEvolvedNow && newScore >= EVOLUTION_THRESHOLD && prevScore < EVOLUTION_THRESHOLD) {
+          setShowEvolutionTree(true)
+        }
+        // Tier 2 evolution
+        if (hasEvolvedNow && !tier2EvolvedNow && newScore >= TIER_2_THRESHOLD && prevScore < TIER_2_THRESHOLD) {
+          setShowEvolutionTree(true)
+        }
       }
     })
 
@@ -2394,6 +3200,21 @@ function App() {
     socket.on('abilityUsed', (data: { cooldownMs: number; usedAt: number; duration: number; abilityType: string }) => {
       setAbilityOnCooldown(true)
 
+      // Play ability sound effect
+      audioManager.playSFX('abilityUse')
+
+      // Add ability particle effect
+      const localPlayer = playersRef.current.get(localPlayerIdRef.current || '')
+      if (localPlayer) {
+        abilityEffectsRef.current.push({
+          x: localPlayer.x,
+          y: localPlayer.y,
+          startTime: Date.now(),
+          duration: 600,
+          spikeType: currentSpikeType
+        })
+      }
+
       if (abilityCooldownTimeoutRef.current !== null) {
         window.clearTimeout(abilityCooldownTimeoutRef.current)
       }
@@ -2410,6 +3231,11 @@ function App() {
       const x = player ? player.x : data.x
       const y = player ? player.y : data.y
       const now = Date.now()
+
+      // Play boost sound effect (only for local player)
+      if (data.playerId === localPlayerIdRef.current) {
+        audioManager.playSFX('boost')
+      }
 
       // Initial burst at the boost start point
       boostEffectsRef.current.push({
@@ -2433,6 +3259,9 @@ function App() {
         const next = [...prev, msg]
         return next.slice(-40)
       })
+
+      // Play chat message sound effect
+      audioManager.playSFX('chatMessage', 0.5)
     })
 
     // Handle speed boost errors (e.g., not moving, on cooldown)
@@ -2471,6 +3300,11 @@ function App() {
           startTime: Date.now(),
           duration: 500, // 500ms effect
         })
+
+        // Play collision sound effect (only for local player)
+        if (localPlayerIdRef.current && (localPlayerIdRef.current === data.player1Id || localPlayerIdRef.current === data.player2Id)) {
+          audioManager.playSFX('collision')
+        }
 
         // Create collision particles
         const particleCount = 20
@@ -2530,6 +3364,43 @@ function App() {
               startTime: Date.now(),
               duration: severity === 'extreme' ? 1500 : 1200,
             })
+
+            // If this is the local player taking damage, add screen shake and damage flash
+            if (targetPlayer.id === localPlayerIdRef.current) {
+              // Screen shake intensity based on damage severity
+              let shakeIntensity = 5
+              let shakeDuration = 200
+
+              switch (severity) {
+                case 'heavy':
+                  shakeIntensity = 8
+                  shakeDuration = 250
+                  break
+                case 'critical':
+                  shakeIntensity = 12
+                  shakeDuration = 300
+                  break
+                case 'extreme':
+                  shakeIntensity = 16
+                  shakeDuration = 400
+                  break
+              }
+
+              screenShakeRef.current = {
+                x: 0,
+                y: 0,
+                intensity: shakeIntensity,
+                startTime: Date.now(),
+                duration: shakeDuration
+              }
+
+              // Damage flash
+              damageFlashRef.current = {
+                active: true,
+                startTime: Date.now(),
+                duration: 200
+              }
+            }
           }
 
           // Damage taken by player1 and player2 (from the perspective of this collision)
@@ -2585,6 +3456,9 @@ function App() {
 
       // If local player is the killer, show a kill popup at the victim position
       if (localId && data.killedBy === localId) {
+        // Play kill sound effect
+        audioManager.playSFX('killEnemy')
+
         if (victim) {
           damagePopupsRef.current.push({
             id: `${Date.now()}-${Math.random()}`,
@@ -2600,6 +3474,33 @@ function App() {
 
       // Check if it's the local player who died
       if (data.playerId === localPlayerIdRef.current) {
+        // Play death sound effect
+        audioManager.playSFX('death')
+
+        // If authenticated, save premium orbs to account
+        if (isAuthenticated && data.stats.premiumOrbsEaten > 0) {
+          const token = localStorage.getItem('authToken')
+          if (token) {
+            fetch(`${selectedServerUrl}/api/game/add-orbs`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ orbs: data.stats.premiumOrbsEaten })
+            })
+            .then(res => res.json())
+            .then(orbData => {
+              console.log(`✅ Saved ${data.stats.premiumOrbsEaten} premium orbs. New balance: ${orbData.totalOrbs}`)
+              setPremiumOrbs(orbData.totalOrbs)
+              showAuthNotification(`+${data.stats.premiumOrbsEaten} Premium Orbs earned!`, 'success')
+            })
+            .catch(err => {
+              console.error('❌ Error saving premium orbs:', err)
+            })
+          }
+        }
+
         // Start death animation
         setDeathAnimationProgress(0)
 
@@ -2632,10 +3533,109 @@ function App() {
       }
     })
 
-    socket.on('disconnect', () => {
-      console.log('Disconnected from server')
+    // Handle join errors (e.g., profanity in username)
+    socket.on('joinError', (data: { message: string }) => {
+      console.log('Join error:', data.message)
+
+      // Immediately return player to menu and show a sleek notification
+      // instead of a blocking modal. This keeps the experience fast and
+      // consistent with other in-game messaging.
       setGameState('menu')
-      socketRef.current = null
+      setShowDisconnectScreen(false)
+
+      // Clear out any in-game state that depends on an active player
+      localPlayerIdRef.current = null
+      playersRef.current.clear()
+      playerScoresRef.current.clear()
+
+      // Disconnect the socket so a fresh connection will be created on next Play
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+        socketRef.current = null
+      }
+
+      // Show the actual server message instead of hardcoded text
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: data.message.toUpperCase(),
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+    })
+
+    // Handle chat errors (e.g., timeout)
+    socket.on('chatError', (data: { message: string }) => {
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: data.message.toUpperCase(),
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+    })
+
+    // Handle AFK activation started
+    socket.on('afkActivationStarted', (data: { duration: number }) => {
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: 'STAY STILL FOR 10 SECONDS TO GO AFK...',
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+    })
+
+    // Handle AFK activation cancelled
+    socket.on('afkActivationCancelled', (data: { reason: string }) => {
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: `AFK CANCELLED: ${data.reason.toUpperCase()}`,
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+    })
+
+    // Handle AFK status changed
+    socket.on('afkStatusChanged', (data: { isAFK: boolean }) => {
+      setIsAFK(data.isAFK)
+
+      if (data.isAFK) {
+        notificationsRef.current.push({
+          id: Math.random().toString(36).substring(2, 11),
+          message: 'YOU ARE NOW AFK. PRESS O TO RESUME.',
+          timestamp: Date.now(),
+          opacity: 1,
+        })
+      } else {
+        notificationsRef.current.push({
+          id: Math.random().toString(36).substring(2, 11),
+          message: 'AFK MODE DISABLED',
+          timestamp: Date.now(),
+          opacity: 1,
+        })
+      }
+    })
+
+    // Handle AFK error (e.g., not in base)
+    socket.on('afkError', (data: { message: string }) => {
+      notificationsRef.current.push({
+        id: Math.random().toString(36).substring(2, 11),
+        message: data.message.toUpperCase(),
+        timestamp: Date.now(),
+        opacity: 1,
+      })
+    })
+
+    socket.on('disconnect', (reason) => {
+      console.log('Disconnected from server. Reason:', reason)
+      // Show disconnect screen if we're in playing or connecting state
+      // This prevents showing it when user intentionally goes to menu
+      if (gameState === 'playing' || gameState === 'connecting') {
+        setShowDisconnectScreen(true)
+
+        // If we were in connecting state, move to playing so the disconnect screen shows properly
+        if (gameState === 'connecting') {
+          setGameState('playing')
+        }
+      }
     })
 
   }, [gameState, displayName])
@@ -2715,11 +3715,47 @@ function App() {
       cameraRef.current.x += (targetCameraX - cameraRef.current.x) * lerpFactor
       cameraRef.current.y += (targetCameraY - cameraRef.current.y) * lerpFactor
 
-      const cameraX = cameraRef.current.x
-      const cameraY = cameraRef.current.y
+      let cameraX = cameraRef.current.x
+      let cameraY = cameraRef.current.y
 
-      // Apply camera transform
+      // Update screen shake
+      const currentTime = Date.now()
+      if (screenShakeRef.current.intensity > 0) {
+        const elapsed = currentTime - screenShakeRef.current.startTime
+        if (elapsed < screenShakeRef.current.duration) {
+          const progress = elapsed / screenShakeRef.current.duration
+          const intensity = screenShakeRef.current.intensity * (1 - progress)
+          screenShakeRef.current.x = (Math.random() - 0.5) * intensity * 2
+          screenShakeRef.current.y = (Math.random() - 0.5) * intensity * 2
+          cameraX += screenShakeRef.current.x
+          cameraY += screenShakeRef.current.y
+        } else {
+          screenShakeRef.current.intensity = 0
+          screenShakeRef.current.x = 0
+          screenShakeRef.current.y = 0
+        }
+      }
+
+      // Update camera zoom based on player size
+      if (localPlayer) {
+        const baseScoreForSize = localPlayer.score || 0
+        const evolutionOffset = localPlayer.evolutionScoreOffset || 0
+        const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
+        // Zoom out slightly as player grows (1.0 at size 1x, 0.85 at size 2x, 0.75 at size 3x)
+        const targetZoom = Math.max(0.7, 1.0 - (sizeMultiplier - 1) * 0.15)
+        cameraZoomRef.current += (targetZoom - cameraZoomRef.current) * 0.05
+      }
+
+      // Apply camera transform with zoom
       ctx.save()
+
+      // Apply zoom from center of screen
+      const centerX = canvas.width / 2
+      const centerY = canvas.height / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(cameraZoomRef.current, cameraZoomRef.current)
+      ctx.translate(-centerX, -centerY)
+
       ctx.translate(-cameraX, -cameraY)
 
       // Draw modern grid background
@@ -2878,11 +3914,17 @@ function App() {
         // Calculate size based on player's score (from server)
         // AI hunters keep a fixed physical size so they don't snowball visually.
         const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
-        const sizeMultiplier = getSizeMultiplier(baseScoreForSize)
+        const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
+        const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
         const scaledSize = PLAYER_SIZE * sizeMultiplier
 
-        // Ghost mode makes player semi-transparent
-        const opacity = (player.abilityActive && player.spikeType === 'Thorn') ? 0.4 : 1
+        // Ghost mode makes player semi-transparent (applies to Thorn and its ghost variants)
+        const ghostModeSpikes: SpikeType[] = ['Thorn', 'ThornWraith', 'ThornShade']
+        const opacity = (player.abilityActive && ghostModeSpikes.includes(player.spikeType as SpikeType)) ? 0.4 : 1
+
+        // Draw spike visual effects (glow, particles, etc.)
+        const spikeEffectId = (player as any).activeSpike || 'spike_default'
+        drawSpikeEffects(ctx, player.x, player.y, scaledSize, spikeEffectId)
 
         drawSpike(
           ctx,
@@ -2902,12 +3944,125 @@ function App() {
           opacity, // Ghost mode opacity
         )
 
+        // BristleStrider: Draw damage trail
+        if (player.damageTrail && player.damageTrail.length > 0 && player.abilityActive && player.spikeType === 'BristleStrider') {
+          ctx.save()
+          player.damageTrail.forEach((trailPos: any) => {
+            const age = now - trailPos.timestamp
+            const opacity = Math.max(0, 1 - age / 500) // Fade out over 500ms
+            const radius = trailPos.radius || scaledSize * 0.8
+
+            // Cyan trail glow
+            const gradient = ctx.createRadialGradient(trailPos.x, trailPos.y, 0, trailPos.x, trailPos.y, radius)
+            gradient.addColorStop(0, `rgba(0, 255, 255, ${opacity * 0.6})`)
+            gradient.addColorStop(0.5, `rgba(0, 200, 255, ${opacity * 0.3})`)
+            gradient.addColorStop(1, `rgba(0, 150, 255, 0)`)
+
+            ctx.fillStyle = gradient
+            ctx.beginPath()
+            ctx.arc(trailPos.x, trailPos.y, radius, 0, Math.PI * 2)
+            ctx.fill()
+          })
+          ctx.restore()
+        }
+
+        // StarflareNova: Draw explosion at old position
+        if (player.novaExplosionX && player.novaExplosionY && player.novaExplosionTime) {
+          const timeUntilExplosion = player.novaExplosionTime - now
+          if (timeUntilExplosion > 0) {
+            // Draw warning indicator
+            ctx.save()
+            const warningPulse = 0.5 + Math.sin(now * 0.02) * 0.5
+            const warningRadius = 200 * (1 - timeUntilExplosion / 700)
+
+            ctx.beginPath()
+            ctx.arc(player.novaExplosionX, player.novaExplosionY, warningRadius, 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255, 200, 0, ${warningPulse * 0.8})`
+            ctx.lineWidth = 4
+            ctx.stroke()
+
+            ctx.beginPath()
+            ctx.arc(player.novaExplosionX, player.novaExplosionY, warningRadius * 0.5, 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255, 150, 0, ${warningPulse * 0.6})`
+            ctx.lineWidth = 2
+            ctx.stroke()
+            ctx.restore()
+          }
+        }
+
+        // StarflarePulsar: Draw shockwave
+        if (player.shockwaveX && player.shockwaveY && player.shockwaveTime) {
+          const shockwaveAge = now - player.shockwaveTime
+          if (shockwaveAge < 500) {
+            ctx.save()
+            const progress = shockwaveAge / 500
+            const shockwaveRadius = 150 * progress
+            const opacity = 1 - progress
+
+            ctx.beginPath()
+            ctx.arc(player.shockwaveX, player.shockwaveY, shockwaveRadius, 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255, 230, 100, ${opacity * 0.9})`
+            ctx.lineWidth = 8
+            ctx.stroke()
+
+            ctx.beginPath()
+            ctx.arc(player.shockwaveX, player.shockwaveY, shockwaveRadius * 0.7, 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(255, 200, 50, ${opacity * 0.7})`
+            ctx.lineWidth = 5
+            ctx.stroke()
+            ctx.restore()
+          }
+        }
+
+        // PrickleSwarm: Draw Spine Storm aura
+        if (player.spineStormActive && player.abilityActive && player.spikeType === 'PrickleSwarm') {
+          ctx.save()
+          const stormPulse = Math.sin(now * 0.015) * 0.3 + 0.7
+          const stormRadius = scaledSize * 2.5
+
+          // Pulsing damage aura
+          ctx.beginPath()
+          ctx.arc(player.x, player.y, stormRadius, 0, Math.PI * 2)
+          ctx.strokeStyle = `rgba(255, 100, 0, ${stormPulse * 0.5})`
+          ctx.lineWidth = 6
+          ctx.stroke()
+
+          // Inner storm ring
+          ctx.beginPath()
+          ctx.arc(player.x, player.y, stormRadius * 0.7, 0, Math.PI * 2)
+          ctx.strokeStyle = `rgba(255, 150, 50, ${stormPulse * 0.7})`
+          ctx.lineWidth = 4
+          ctx.stroke()
+
+          // Rotating spikes
+          ctx.translate(player.x, player.y)
+          ctx.rotate(now * 0.005)
+          for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2
+            const x1 = Math.cos(angle) * stormRadius * 0.8
+            const y1 = Math.sin(angle) * stormRadius * 0.8
+            const x2 = Math.cos(angle) * stormRadius
+            const y2 = Math.sin(angle) * stormRadius
+
+            ctx.beginPath()
+            ctx.moveTo(x1, y1)
+            ctx.lineTo(x2, y2)
+            ctx.strokeStyle = `rgba(255, 120, 0, ${stormPulse * 0.6})`
+            ctx.lineWidth = 3
+            ctx.stroke()
+          }
+          ctx.restore()
+        }
+
         // Draw ability visual effects
         if (player.abilityActive && player.spikeType) {
           ctx.save()
 
           switch (player.spikeType) {
-            case 'Prickle': // Super Density - pulsing orange shield
+            case 'Prickle':
+            case 'PrickleVanguard':
+            case 'PrickleSwarm':
+            case 'PrickleBastion': // Super Density line - pulsing orange shield
               const densityPulse = 0.7 + Math.sin(Date.now() * 0.008) * 0.3
 
               // Outer shield layer
@@ -2932,7 +4087,10 @@ function App() {
               ctx.stroke()
               break
 
-            case 'Thorn': // Ghost Mode - ethereal glow
+            case 'Thorn':
+            case 'ThornWraith':
+            case 'ThornReaper':
+            case 'ThornShade': // Ghost / execution line - ethereal glow
               // Pulsing ghostly aura
               const ghostPulse = 0.5 + Math.sin(Date.now() * 0.005) * 0.3
               ctx.beginPath()
@@ -2949,7 +4107,10 @@ function App() {
               ctx.stroke()
               break
 
-            case 'Bristle': // Double Speed - intense speed aura
+            case 'Bristle':
+            case 'BristleBlitz':
+            case 'BristleStrider':
+            case 'BristleSkirmisher': // Speed line - intense speed aura
               // Pulsing speed rings
               const speedPulse = Date.now() * 0.01
               for (let ring = 0; ring < 3; ring++) {
@@ -2987,7 +4148,10 @@ function App() {
               }
               break
 
-            case 'Bulwark': // Invincibility - radiant golden shield
+            case 'Bulwark':
+            case 'BulwarkAegis':
+            case 'BulwarkCitadel':
+            case 'BulwarkJuggernaut': // Invincibility / fortress line - radiant golden shield
               const invincPulse = 0.8 + Math.sin(Date.now() * 0.01) * 0.2
 
               // Outer radiant layer
@@ -3030,7 +4194,10 @@ function App() {
               ctx.restore()
               break
 
-            case 'Starflare': // Teleportation - cosmic energy
+            case 'Starflare':
+            case 'StarflarePulsar':
+            case 'StarflareHorizon':
+            case 'StarflareNova': // Teleportation / nova line - cosmic energy
               const starTime = Date.now() * 0.005
 
               // Orbiting star particles
@@ -3070,7 +4237,10 @@ function App() {
               ctx.fill()
               break
 
-            case 'Mauler': // Fortress - aggressive red barrier
+            case 'Mauler':
+            case 'MaulerRavager':
+            case 'MaulerBulwark':
+            case 'MaulerApex': // Fortress / apex line - aggressive red barrier
               const fortressPulse = 0.6 + Math.sin(Date.now() * 0.012) * 0.4
 
               // Outer aggressive barrier
@@ -3122,7 +4292,8 @@ function App() {
       playersRef.current.forEach((player) => {
         // Calculate size based on player's score (from server)
         const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
-        const sizeMultiplier = getSizeMultiplier(baseScoreForSize)
+        const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
+        const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
         const scaledSize = PLAYER_SIZE * sizeMultiplier
         const deathProgress = player.deathProgress || 0
 
@@ -3142,9 +4313,11 @@ function App() {
           const badgeRadius = 11 * sizeScale
           const badgeOffset = 45 * sizeScale
 
-          // Measure text for badge sizing
+          // Measure text for badge sizing. Use the full display name (including
+          // AFK prefix) so the badge width always matches the rendered text.
+          const displayNameForMeasure = player.isAFK ? `[AFK] ${player.username}` : player.username
           ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
-          const textMetrics = ctx.measureText(player.username)
+          const textMetrics = ctx.measureText(displayNameForMeasure)
           const textWidth = textMetrics.width
 
           // Badge dimensions
@@ -3152,33 +4325,81 @@ function App() {
           const badgeY = player.y - scaledSize - badgeOffset
           const badgeX = player.x - badgeWidth / 2
 
-          // Draw badge background with player color
+          // Get nametag customization
+          const nametagId = (player as any).activeNametag || 'nametag_default'
+          const nametagCustomization = getNametagById(nametagId)
+          const nametagStyle = nametagCustomization?.style || {
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            color: '#ffffff',
+            border: 'none',
+            textShadow: '0 0 5px rgba(0, 0, 0, 0.8)',
+            fontWeight: 'bold'
+          }
+
+          // Parse background color from style
+          const bgColor = nametagStyle.backgroundColor || player.color
+
+          // Draw badge background with customization style
           drawRoundedRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, badgeRadius)
-          ctx.fillStyle = player.color
-          ctx.shadowColor = player.color
-          ctx.shadowBlur = 15
+          ctx.fillStyle = bgColor
+
+          // Apply box shadow if present
+          if (nametagStyle.boxShadow) {
+            // Parse box shadow (simplified - just use glow effect)
+            const glowColor = nametagStyle.color || player.color
+            ctx.shadowColor = glowColor
+            ctx.shadowBlur = 15
+          } else {
+            ctx.shadowColor = player.color
+            ctx.shadowBlur = 15
+          }
+
           ctx.fill()
           ctx.shadowBlur = 0
 
-          // Draw badge border
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
-          ctx.lineWidth = 1.5
-          ctx.stroke()
+          // Draw badge border with customization style
+          if (nametagStyle.border && nametagStyle.border !== 'none') {
+            // Parse border (simplified - extract color)
+            const borderMatch = nametagStyle.border.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/)
+            const borderColor = borderMatch ? borderMatch[0] : 'rgba(255, 255, 255, 0.3)'
+            ctx.strokeStyle = borderColor
+            ctx.lineWidth = 2
+            ctx.stroke()
+          } else {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
+            ctx.lineWidth = 1.5
+            ctx.stroke()
+          }
 
-          // Draw username text with black outline for readability
+          // Draw username text with customization style
           ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
 
+          // Add AFK indicator if player is AFK
+          const displayName = player.isAFK ? `[AFK] ${player.username}` : player.username
+
+          // Text outline
           ctx.lineJoin = 'round'
           ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)'
           ctx.lineWidth = 3 * sizeScale
-          ctx.strokeText(player.username, player.x, badgeY + badgeHeight / 2)
+          ctx.strokeText(displayName, player.x, badgeY + badgeHeight / 2)
 
-          ctx.fillStyle = '#ffffff'
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.8)'
-          ctx.shadowBlur = 4
-          ctx.fillText(player.username, player.x, badgeY + badgeHeight / 2)
+          // Text fill with customization color
+          const textColor = player.isAFK ? '#ffaa00' : (nametagStyle.color || '#ffffff')
+          ctx.fillStyle = textColor
+
+          // Apply text shadow from customization
+          if (nametagStyle.textShadow) {
+            // Parse text shadow (simplified - just use glow effect)
+            ctx.shadowColor = textColor
+            ctx.shadowBlur = 8
+          } else {
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)'
+            ctx.shadowBlur = 4
+          }
+
+          ctx.fillText(displayName, player.x, badgeY + badgeHeight / 2)
           ctx.shadowBlur = 0
 
           ctx.restore()
@@ -3191,11 +4412,26 @@ function App() {
         drawBoostEffects(ctx, boostEffectsRef.current)
         drawEvolutionEffects(ctx, evolutionEffectsRef.current)
         drawCollisionParticles(ctx, collisionParticlesRef.current)
+        drawSpawnEffects(ctx, spawnEffectsRef.current)
+        drawAbilityEffects(ctx, abilityEffectsRef.current)
         drawScorePopups(ctx, scorePopupsRef.current)
         drawDamagePopups(ctx, damagePopupsRef.current)
       }
 
       ctx.restore()
+
+      // Draw damage flash overlay in screen space
+      if (damageFlashRef.current.active) {
+        const elapsed = currentTime - damageFlashRef.current.startTime
+        if (elapsed < damageFlashRef.current.duration) {
+          const progress = elapsed / damageFlashRef.current.duration
+          const opacity = (1 - progress) * 0.3
+          ctx.fillStyle = `rgba(255, 0, 0, ${opacity})`
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        } else {
+          damageFlashRef.current.active = false
+        }
+      }
 
       // Draw status bars (HP and Score) in screen space
       const currentScore = localPlayer ? (localPlayer.score || 0) : 0
@@ -3287,30 +4523,54 @@ function App() {
   }, [gameState, deathAnimationProgress])
 
   const handlePlay = () => {
+    // Play UI click sound
+    audioManager.playSFX('uiClick')
+
+    // Haptic feedback
+    hapticManager.trigger('medium')
+
+    // Start background music
+    audioManager.startMusic()
+
+    // If tutorial is open, close it when starting the game
+    setShowHowToPlay(false)
+    setTutorialStep(0)
+
+    // Select a random loading tip
+    const randomTip = LOADING_TIPS[Math.floor(Math.random() * LOADING_TIPS.length)]
+    setLoadingTip(randomTip)
+
     // Add fade-out class to menu
     const menuContent = document.querySelector('.content')
     if (menuContent) {
       menuContent.classList.add('fade-out')
     }
 
-    // Wait for fade-out animation, then show connecting screen
-    setTimeout(() => {
-      setGameState('connecting')
-
-      // Show connecting screen for a bit, then start game
-      setTimeout(() => {
-        setGameState('playing')
-      }, 1000)
-    }, 300)
+    // Immediately move into connecting state.
+    // We no longer auto-force `playing` on a timer; instead we wait for
+    // the server to send `init` before considering the game "live".
+    setGameState('connecting')
   }
 
   const handleRespawn = () => {
+    // Play UI click sound
+    audioManager.playSFX('uiClick')
+
+    // Haptic feedback
+    hapticManager.trigger('medium')
+
+    // Play spawn sound
+    audioManager.playSFX('spawn')
+
     // Reset death state
     setDeathStats(null)
     setDeathAnimationProgress(0)
 
     // Reset evolution state
     setHasEvolved(false)
+    setTier2Evolved(false)
+    hasEvolvedRef.current = false
+    tier2EvolvedRef.current = false
     setShowEvolutionTree(false)
     setCurrentSpikeType('Spike')
 
@@ -3322,10 +4582,18 @@ function App() {
   }
 
   const handleGoHome = () => {
-    // Disconnect from server
+    // Play UI click sound
+    audioManager.playSFX('uiClick')
+
+    // Haptic feedback
+    hapticManager.trigger('light')
+
+    // DON'T disconnect the socket - just leave the game
+    // The socket will remain connected so the user stays authenticated
+    // and can rejoin without reconnecting
     if (socketRef.current) {
-      socketRef.current.disconnect()
-      socketRef.current = null
+      // Emit a 'leaveGame' event to tell server we're going to menu
+      socketRef.current.emit('leaveGame')
     }
 
     // Reset state
@@ -3334,9 +4602,316 @@ function App() {
     playersRef.current.clear()
     localPlayerIdRef.current = null
 
+    // Clear chat messages when returning to menu
+    setChatMessages([])
+
     // Go to menu
     setGameState('menu')
   }
+
+  // Authentication handlers
+  const showAuthNotification = (message: string, type: 'success' | 'error') => {
+    setAuthNotification({ message, type })
+    setTimeout(() => setAuthNotification(null), 3000)
+  }
+
+  const handleSignUp = async (username: string, password: string, confirmPassword: string) => {
+    try {
+      // Validation
+      if (!username || !password || !confirmPassword) {
+        showAuthNotification('Please fill in all fields', 'error')
+        return
+      }
+
+      if (password !== confirmPassword) {
+        showAuthNotification('Passwords don\'t match!', 'error')
+        return
+      }
+
+      if (username.length < 3 || username.length > 20) {
+        showAuthNotification('Username must be 3-20 characters', 'error')
+        return
+      }
+
+      if (!/^[a-zA-Z0-9]+$/.test(username)) {
+        showAuthNotification('Username must be alphanumeric only', 'error')
+        return
+      }
+
+      if (password.length < 6) {
+        showAuthNotification('Password must be at least 6 characters', 'error')
+        return
+      }
+
+      // Call API
+      const response = await fetch(`${selectedServerUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, confirmPassword })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        showAuthNotification(data.error || 'Registration failed', 'error')
+        return
+      }
+
+      // Success
+      showAuthNotification(data.message || 'Success! Account created.', 'success')
+
+      // Store token
+      localStorage.setItem('authToken', data.token)
+
+      // Set user state
+      setIsAuthenticated(true)
+      setCurrentUser(data.user)
+
+      // Close modal
+      setShowSignUp(false)
+
+      // Auto-login after 1 second
+      setTimeout(() => {
+        setDisplayName(data.user.username)
+      }, 1000)
+    } catch (error) {
+      console.error('Sign up error:', error)
+      showAuthNotification('Server error. Please try again.', 'error')
+    }
+  }
+
+  const handleLogin = async (username: string, password: string) => {
+    try {
+      // Validation
+      if (!username || !password) {
+        showAuthNotification('Please fill in all fields', 'error')
+        return
+      }
+
+      // Call API
+      const response = await fetch(`${selectedServerUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        showAuthNotification(data.error || 'Login failed', 'error')
+        return
+      }
+
+      // Success
+      showAuthNotification(data.message || 'Login successful!', 'success')
+
+      // Store token
+      localStorage.setItem('authToken', data.token)
+
+      // Set user state
+      setIsAuthenticated(true)
+      setCurrentUser(data.user)
+
+      // Close modal
+      setShowLogin(false)
+
+      // Set display name
+      setDisplayName(data.user.username)
+    } catch (error) {
+      console.error('Login error:', error)
+      showAuthNotification('Server error. Please try again.', 'error')
+    }
+  }
+
+  const handleLogout = () => {
+    // Clear token
+    localStorage.removeItem('authToken')
+
+    // Clear user state
+    setIsAuthenticated(false)
+    setCurrentUser(null)
+
+    // Disconnect socket
+    if (socketRef.current) {
+      socketRef.current.disconnect()
+      socketRef.current = null
+    }
+
+    // Reset game state
+    setGameState('menu')
+    setDisplayName('')
+
+    // Close modals
+    setShowLogoutConfirm(false)
+
+    // Show notification
+    showAuthNotification('Logged out successfully', 'success')
+  }
+
+  // Customization handlers
+  const fetchCustomizationsData = async () => {
+    try {
+      const token = localStorage.getItem('authToken')
+      if (!token) return
+
+      // Fetch available customizations
+      const availableRes = await fetch(`${selectedServerUrl}/api/customizations/available`)
+      const availableData = await availableRes.json()
+      setAvailableCustomizations(availableData)
+
+      // Fetch owned customizations
+      const ownedRes = await fetch(`${selectedServerUrl}/api/customizations/owned`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      const ownedData = await ownedRes.json()
+
+      setPremiumOrbs(ownedData.premiumOrbs || 0)
+      setOwnedCustomizations(ownedData.ownedCustomizations || [])
+
+      // Set active customizations from server or localStorage or defaults
+      const serverNametag = ownedData.activeNametag
+      const serverSpike = ownedData.activeSpike
+      const localNametag = localStorage.getItem('activeNametag')
+      const localSpike = localStorage.getItem('activeSpike')
+
+      const finalNametag = serverNametag || localNametag || 'nametag_default'
+      const finalSpike = serverSpike || localSpike || 'spike_default'
+
+      setActiveNametag(finalNametag)
+      setActiveSpike(finalSpike)
+
+      // Save to localStorage
+      localStorage.setItem('activeNametag', finalNametag)
+      localStorage.setItem('activeSpike', finalSpike)
+
+      // If server doesn't have defaults set, equip them
+      if (!serverNametag && finalNametag === 'nametag_default') {
+        handleEquipCustomization('nametag_default', 'nametag')
+      }
+      if (!serverSpike && finalSpike === 'spike_default') {
+        handleEquipCustomization('spike_default', 'spike')
+      }
+    } catch (error) {
+      console.error('Error fetching customizations:', error)
+    }
+  }
+
+  const handlePurchaseCustomization = async (customizationId: string, price: number) => {
+    try {
+      const token = localStorage.getItem('authToken')
+      if (!token) return
+
+      const response = await fetch(`${selectedServerUrl}/api/customizations/purchase`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ customizationId })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        showAuthNotification(data.error || 'Purchase failed', 'error')
+        return
+      }
+
+      showAuthNotification('Customization purchased!', 'success')
+      setPremiumOrbs(data.premiumOrbs)
+      setOwnedCustomizations(prev => [...prev, customizationId])
+    } catch (error) {
+      console.error('Error purchasing customization:', error)
+      showAuthNotification('Server error. Please try again.', 'error')
+    }
+  }
+
+  const handleEquipCustomization = async (customizationId: string, type: 'nametag' | 'spike') => {
+    try {
+      const token = localStorage.getItem('authToken')
+      if (!token) return
+
+      const response = await fetch(`${selectedServerUrl}/api/customizations/equip`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ customizationId })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        showAuthNotification(data.error || 'Equip failed', 'error')
+        return
+      }
+
+      showAuthNotification('Customization equipped!', 'success')
+
+      if (type === 'nametag') {
+        setActiveNametag(customizationId)
+        localStorage.setItem('activeNametag', customizationId)
+      } else {
+        setActiveSpike(customizationId)
+        localStorage.setItem('activeSpike', customizationId)
+      }
+    } catch (error) {
+      console.error('Error equipping customization:', error)
+      showAuthNotification('Server error. Please try again.', 'error')
+    }
+  }
+
+  // Fetch customizations when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchCustomizationsData()
+    }
+  }, [isAuthenticated])
+
+  // Load saved server selection on mount
+  useEffect(() => {
+    const savedServer = localStorage.getItem('selectedServer')
+    if (savedServer) {
+      setSelectedServerUrl(savedServer)
+    }
+  }, [])
+
+  // Check for existing auth token on mount
+  useEffect(() => {
+    const token = localStorage.getItem('authToken')
+    if (token) {
+      console.log('🔐 Found auth token, verifying...')
+      // Verify token with server
+      fetch(`${selectedServerUrl}/api/auth/verify`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('Token verification failed')
+          }
+          return res.json()
+        })
+        .then(data => {
+          if (data.user) {
+            console.log('✅ Auto-login successful:', data.user.username)
+            setIsAuthenticated(true)
+            setCurrentUser(data.user)
+            setDisplayName(data.user.username)
+            showAuthNotification(`Welcome back, ${data.user.username}!`, 'success')
+          } else {
+            console.log('❌ Invalid token data')
+            localStorage.removeItem('authToken')
+          }
+        })
+        .catch((error) => {
+          console.log('❌ Token verification error:', error)
+          localStorage.removeItem('authToken')
+        })
+    } else {
+      console.log('ℹ️ No auth token found')
+    }
+  }, [])
 
   const triggerSpeedBoost = () => {
     if (gameState !== 'playing') return
@@ -3345,6 +4920,7 @@ function App() {
   }
 
   const handleSpeedBoostClick = () => {
+    hapticManager.trigger('medium')
     triggerSpeedBoost()
   }
 
@@ -3358,24 +4934,24 @@ function App() {
     // Check if ability is on cooldown
     if (abilityOnCooldown) {
       // Show notification
-      const abilityConfig = EVOLUTION_OPTIONS.find(opt => opt.type === currentSpikeType)
-      const abilityName = abilityConfig?.ability || 'Ability'
+      const abilityDisplay = getAbilityDisplayConfig(currentSpikeType)
       notificationsRef.current.push({
         id: Math.random().toString(36).substring(2, 11),
-        message: `${abilityName.toUpperCase()} ON COOLDOWN`,
+        message: `${abilityDisplay.label.toUpperCase()} ON COOLDOWN`,
         timestamp: Date.now(),
         opacity: 1,
       })
       return
     }
 
-    // Double Speed (Bristle) can only be used while moving
-    if (currentSpikeType === 'Bristle') {
+    // Speed abilities (Bristle line) can only be used while moving
+    const speedAbilitySpikes: SpikeType[] = ['Bristle', 'BristleBlitz', 'BristleStrider', 'BristleSkirmisher']
+    if (speedAbilitySpikes.includes(currentSpikeType)) {
       const isMoving = keysRef.current.w || keysRef.current.a || keysRef.current.s || keysRef.current.d
       if (!isMoving) {
         notificationsRef.current.push({
           id: Math.random().toString(36).substring(2, 11),
-          message: 'MUST BE MOVING TO USE DOUBLE SPEED',
+          message: 'MUST BE MOVING TO USE SPEED ABILITY',
           timestamp: Date.now(),
           opacity: 1,
         })
@@ -3387,6 +4963,7 @@ function App() {
   }
 
   const handleAbilityClick = () => {
+    hapticManager.trigger('heavy')
     triggerAbility()
   }
 
@@ -3429,6 +5006,8 @@ function App() {
       }
       return `Killed by ${killerPlayer.username}`
     }
+
+
     return 'Killed by another spike'
   })()
 
@@ -3456,9 +5035,34 @@ function App() {
 
 
   return (
-    <div className="app">
+    <div className={`app ${isTouchDevice ? 'is-touch' : 'is-desktop'}`}>
       <div className={`grid-background ${gameState === 'playing' ? 'hidden' : ''}`} />
       <canvas ref={canvasRef} className={`game-canvas ${gameState === 'playing' ? 'playing' : ''}`} />
+
+      {isTouchDevice && isPortrait && (
+        <div className="orientation-lock-overlay">
+          <div className="orientation-lock-card">
+            <div className="orientation-lock-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="7" y="4" width="10" height="16" rx="2" ry="2" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+              </svg>
+            </div>
+            <h2>Rotate your device</h2>
+            <p>For the best experience, play burrs.io in landscape on mobile or tablet.</p>
+          </div>
+        </div>
+      )}
 
       {gameState === 'playing' && isTouchDevice && (
         <div
@@ -3468,6 +5072,7 @@ function App() {
             const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
             setJoystickCenter(center)
             setJoystickActive(true)
+            hapticManager.trigger('light')
           }}
           onTouchMove={(e: React.TouchEvent<HTMLDivElement>) => {
             if (!joystickCenter) return
@@ -3484,6 +5089,7 @@ function App() {
           onTouchEnd={() => {
             setJoystickActive(false)
             setJoystickVector({ x: 0, y: 0 })
+            hapticManager.trigger('light')
           }}
         >
           <div className="joystick-base" />
@@ -3526,14 +5132,14 @@ function App() {
       )}
 
       {gameState === 'playing' && hasEvolved && (() => {
+        const abilityDisplay = getAbilityDisplayConfig(currentSpikeType)
         const abilityConfig = EVOLUTION_OPTIONS.find(opt => opt.type === currentSpikeType)
-        const abilityName = abilityConfig?.ability || 'Ability'
 
         return (
           <button
             className={`ability-button ${abilityOnCooldown ? 'cooldown' : ''}`}
             onClick={handleAbilityClick}
-            aria-label={`${abilityName} (N)`}
+            aria-label={`${abilityDisplay.name} (N)`}
             style={{
               '--ability-cooldown': abilityConfig ? `${abilityConfig.abilityCooldown}ms` : '20s'
             } as React.CSSProperties}
@@ -3553,11 +5159,43 @@ function App() {
                 strokeWidth="1.2"
               />
             </svg>
-            <span className="ability-label">{abilityName}</span>
+            <span className="ability-label">{abilityDisplay.label}</span>
             <span className="ability-key">N</span>
           </button>
         )
       })()}
+
+      {gameState === 'playing' && (
+        <>
+          <button
+            className="ingame-audio-settings-button"
+            onClick={() => {
+              audioManager.playSFX('uiClick')
+              setShowAudioSettings(true)
+            }}
+            aria-label="Audio Settings"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+          </button>
+          <button
+            className="ingame-settings-button"
+            onClick={() => {
+              audioManager.playSFX('uiClick')
+              setShowSettings(true)
+            }}
+            aria-label="Settings"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+            </svg>
+          </button>
+        </>
+      )}
 
       {gameState === 'playing' && isChatOpen && (
         <div className="chat-panel">
@@ -3574,14 +5212,24 @@ function App() {
           </div>
           <div className="chat-log" ref={chatLogRef}>
             {chatMessages.map((msg) => (
-              <div key={msg.id} className="chat-message">
+              <div
+                key={msg.id}
+                className="chat-message"
+                style={{
+                  backgroundColor: msg.isSystem ? 'rgba(255, 215, 0, 0.1)' : 'transparent',
+                  borderLeft: msg.isSystem ? '3px solid #ffd700' : 'none',
+                  paddingLeft: msg.isSystem ? '8px' : '0',
+                }}
+              >
                 <span
                   className="chat-username"
                   style={{
-                    color:
+                    color: msg.isSystem ? '#ffd700' : (
                       msg.teamColor ||
                       playersRef.current.get(msg.playerId)?.color ||
-                      '#ffffff',
+                      '#ffffff'
+                    ),
+                    fontWeight: msg.isSystem ? 'bold' : 'normal',
                   }}
                 >
                   {msg.username}
@@ -3634,6 +5282,80 @@ function App() {
 
       {gameState === 'menu' && (
         <div className="content">
+          {/* Authentication buttons in top-right corner */}
+          {!isAuthenticated ? (
+            <div className="auth-buttons">
+              <button
+                className="auth-button signup-button"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowSignUp(true)
+                }}
+              >
+                Sign Up
+              </button>
+              <button
+                className="auth-button login-button"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowLogin(true)
+                }}
+              >
+                Login
+              </button>
+            </div>
+          ) : (
+            <div className="auth-welcome">
+              <div className="premium-orbs-display">
+                <svg className="orbs-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="url(#diamondGradient)"/>
+                  <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <defs>
+                    <linearGradient id="diamondGradient" x1="2" y1="2" x2="22" y2="12">
+                      <stop offset="0%" stopColor="#00ffff" />
+                      <stop offset="100%" stopColor="#00d4ff" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <span className="orbs-count">{premiumOrbs}</span>
+              </div>
+              <button
+                className="customizations-button"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowCustomizations(true)
+                }}
+                title="Customizations Shop"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M6 2L3 6V20C3 20.5304 3.21071 21.0391 3.58579 21.4142C3.96086 21.7893 4.46957 22 5 22H19C19.5304 22 20.0391 21.7893 20.4142 21.4142C20.7893 21.0391 21 20.5304 21 20V6L18 2H6Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M3 6H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M16 10C16 11.0609 15.5786 12.0783 14.8284 12.8284C14.0783 13.5786 13.0609 14 12 14C10.9391 14 9.92172 13.5786 9.17157 12.8284C8.42143 12.0783 8 11.0609 8 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span>Shop</span>
+              </button>
+              <span className="welcome-text">Welcome, {currentUser?.username}!</span>
+              <button
+                className="auth-settings-button"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowAuthSettings(true)
+                }}
+                title="Settings"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M19.4 15C19.2669 15.3016 19.2272 15.6362 19.286 15.9606C19.3448 16.285 19.4995 16.5843 19.73 16.82L19.79 16.88C19.976 17.0657 20.1235 17.2863 20.2241 17.5291C20.3248 17.7719 20.3766 18.0322 20.3766 18.295C20.3766 18.5578 20.3248 18.8181 20.2241 19.0609C20.1235 19.3037 19.976 19.5243 19.79 19.71C19.6043 19.896 19.3837 20.0435 19.1409 20.1441C18.8981 20.2448 18.6378 20.2966 18.375 20.2966C18.1122 20.2966 17.8519 20.2448 17.6091 20.1441C17.3663 20.0435 17.1457 19.896 16.96 19.71L16.9 19.65C16.6643 19.4195 16.365 19.2648 16.0406 19.206C15.7162 19.1472 15.3816 19.1869 15.08 19.32C14.7842 19.4468 14.532 19.6572 14.3543 19.9255C14.1766 20.1938 14.0813 20.5082 14.08 20.83V21C14.08 21.5304 13.8693 22.0391 13.4942 22.4142C13.1191 22.7893 12.6104 23 12.08 23C11.5496 23 11.0409 22.7893 10.6658 22.4142C10.2907 22.0391 10.08 21.5304 10.08 21V20.91C10.0723 20.579 9.96512 20.258 9.77251 19.9887C9.5799 19.7194 9.31074 19.5143 9 19.4C8.69838 19.2669 8.36381 19.2272 8.03941 19.286C7.71502 19.3448 7.41568 19.4995 7.18 19.73L7.12 19.79C6.93425 19.976 6.71368 20.1235 6.47088 20.2241C6.22808 20.3248 5.96783 20.3766 5.705 20.3766C5.44217 20.3766 5.18192 20.3248 4.93912 20.2241C4.69632 20.1235 4.47575 19.976 4.29 19.79C4.10405 19.6043 3.95653 19.3837 3.85588 19.1409C3.75523 18.8981 3.70343 18.6378 3.70343 18.375C3.70343 18.1122 3.75523 17.8519 3.85588 17.6091C3.95653 17.3663 4.10405 17.1457 4.29 16.96L4.35 16.9C4.58054 16.6643 4.73519 16.365 4.794 16.0406C4.85282 15.7162 4.81312 15.3816 4.68 15.08C4.55324 14.7842 4.34276 14.532 4.07447 14.3543C3.80618 14.1766 3.49179 14.0813 3.17 14.08H3C2.46957 14.08 1.96086 13.8693 1.58579 13.4942C1.21071 13.1191 1 12.6104 1 12.08C1 11.5496 1.21071 11.0409 1.58579 10.6658C1.96086 10.2907 2.46957 10.08 3 10.08H3.09C3.42099 10.0723 3.742 9.96512 4.0113 9.77251C4.28059 9.5799 4.48572 9.31074 4.6 9C4.73312 8.69838 4.77282 8.36381 4.714 8.03941C4.65519 7.71502 4.50054 7.41568 4.27 7.18L4.21 7.12C4.02405 6.93425 3.87653 6.71368 3.77588 6.47088C3.67523 6.22808 3.62343 5.96783 3.62343 5.705C3.62343 5.44217 3.67523 5.18192 3.77588 4.93912C3.87653 4.69632 4.02405 4.47575 4.21 4.29C4.39575 4.10405 4.61632 3.95653 4.85912 3.85588C5.10192 3.75523 5.36217 3.70343 5.625 3.70343C5.88783 3.70343 6.14808 3.75523 6.39088 3.85588C6.63368 3.95653 6.85425 4.10405 7.04 4.29L7.1 4.35C7.33568 4.58054 7.63502 4.73519 7.95941 4.794C8.28381 4.85282 8.61838 4.81312 8.92 4.68H9C9.29577 4.55324 9.54802 4.34276 9.72569 4.07447C9.90337 3.80618 9.99872 3.49179 10 3.17V3C10 2.46957 10.2107 1.96086 10.5858 1.58579C10.9609 1.21071 11.4696 1 12 1C12.5304 1 13.0391 1.21071 13.4142 1.58579C13.7893 1.96086 14 2.46957 14 3V3.09C14.0013 3.41179 14.0966 3.72618 14.2743 3.99447C14.452 4.26276 14.7042 4.47324 15 4.6C15.3016 4.73312 15.6362 4.77282 15.9606 4.714C16.285 4.65519 16.5843 4.50054 16.82 4.27L16.88 4.21C17.0657 4.02405 17.2863 3.87653 17.5291 3.77588C17.7719 3.67523 18.0322 3.62343 18.295 3.62343C18.5578 3.62343 18.8181 3.67523 19.0609 3.77588C19.3037 3.87653 19.5243 4.02405 19.71 4.21C19.896 4.39575 20.0435 4.61632 20.1441 4.85912C20.2448 5.10192 20.2966 5.36217 20.2966 5.625C20.2966 5.88783 20.2448 6.14808 20.1441 6.39088C20.0435 6.63368 19.896 6.85425 19.71 7.04L19.65 7.1C19.4195 7.33568 19.2648 7.63502 19.206 7.95941C19.1472 8.28381 19.1869 8.61838 19.32 8.92V9C19.4468 9.29577 19.6572 9.54802 19.9255 9.72569C20.1938 9.90337 20.5082 9.99872 20.83 10H21C21.5304 10 22.0391 10.2107 22.4142 10.5858C22.7893 10.9609 23 11.4696 23 12C23 12.5304 22.7893 13.0391 22.4142 13.4142C22.0391 13.7893 21.5304 14 21 14H20.91C20.5882 14.0013 20.2738 14.0966 20.0055 14.2743C19.7372 14.452 19.5268 14.7042 19.4 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          )}
+
           <h1 className="title">burrs.io</h1>
           <div className="input-container">
             <input
@@ -3652,55 +5374,167 @@ function App() {
               Play
             </button>
           </div>
+          <div className="menu-buttons">
+            <button
+              className="menu-secondary-button"
+              onClick={() => {
+                hapticManager.trigger('light')
+                audioManager.playSFX('uiClick')
+                setShowServerSelector(true)
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px', marginRight: '8px' }}>
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                <line x1="6" y1="18" x2="6.01" y2="18"></line>
+              </svg>
+              Select Server
+            </button>
+            <button
+              className="menu-secondary-button"
+              onClick={() => {
+                hapticManager.trigger('light')
+                audioManager.playSFX('uiClick')
+                setShowHowToPlay(true)
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px', marginRight: '8px' }}>
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              How to Play
+            </button>
+            <button
+              className="menu-secondary-button"
+              onClick={() => {
+                audioManager.playSFX('uiClick')
+                setShowAudioSettings(true)
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px', marginRight: '8px' }}>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+              </svg>
+              Audio Settings
+            </button>
+          </div>
         </div>
       )}
 
       {gameState === 'connecting' && (
-        <div className="content">
-          <div className="connecting-container">
-            <div className="spinner"></div>
-            <h2 className="connecting-text">Connecting...</h2>
-          </div>
-        </div>
-      )}
-
-      {gameState === 'playing' && showEvolutionTree && (
-        <div className="evolution-screen">
-          <div className="evolution-content">
-            <h1 className="evolution-title">Choose Your Evolution</h1>
-            <p className="evolution-subtitle">Select your Tier 1 upgrade</p>
-
-            <div className="evolution-grid">
-              {EVOLUTION_OPTIONS.map((option) => (
-                <EvolutionOption
-                  key={option.type}
-                  option={option}
-                  onSelect={() => {
-                    if (socketRef.current) {
-                      socketRef.current.emit('evolve', option.type)
-                      setShowEvolutionTree(false)
-                      setHasEvolved(true)
-                      setCurrentSpikeType(option.type)
-
-                      // Add evolution effect at player position
-                      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
-                      if (localPlayer) {
-                        evolutionEffectsRef.current.push({
-                          x: localPlayer.x,
-                          y: localPlayer.y,
-                          startTime: Date.now(),
-                          duration: 2000,
-                          spikeType: option.type,
-                        })
-                      }
-                    }
-                  }}
-                />
-              ))}
+        <div className="loading-screen">
+          <div className="loading-content">
+            <h1 className="loading-title">burrs.io</h1>
+            <div className="loading-spinner-container">
+              <div className="loading-spinner"></div>
+            </div>
+            <h2 className="loading-text">Connecting to server...</h2>
+            <div className="loading-tip-container">
+              <div className="loading-tip-icon">💡</div>
+              <p className="loading-tip">{loadingTip}</p>
             </div>
           </div>
         </div>
       )}
+
+      {gameState === 'playing' && showEvolutionTree && (() => {
+        // Determine which tier options to show based on evolution state
+        let tierOptions: typeof TIER_1_OPTIONS = []
+        let tierTitle = ''
+        let tierSubtitle = ''
+
+        if (!hasEvolved) {
+          // Show Tier 1 options
+          tierOptions = TIER_1_OPTIONS
+          tierTitle = 'Choose Your Evolution'
+          tierSubtitle = 'Select your Tier 1 upgrade'
+        } else if (hasEvolved && !tier2Evolved) {
+          // Show Tier 2 options based on current spike type
+          tierTitle = 'Tier 2 Evolution'
+          tierSubtitle = 'Upgrade your spike'
+
+          if (currentSpikeType === 'Prickle') {
+            tierOptions = TIER_2_PRICKLE_OPTIONS
+          } else if (currentSpikeType === 'Thorn') {
+            tierOptions = TIER_2_THORN_OPTIONS
+          } else if (currentSpikeType === 'Bristle') {
+            tierOptions = TIER_2_BRISTLE_OPTIONS
+          } else if (currentSpikeType === 'Bulwark') {
+            tierOptions = TIER_2_BULWARK_OPTIONS
+          } else if (currentSpikeType === 'Starflare') {
+            tierOptions = TIER_2_STARFLARE_OPTIONS
+          } else if (currentSpikeType === 'Mauler') {
+            tierOptions = TIER_2_MAULER_OPTIONS
+          }
+        }
+
+        if (tierOptions.length === 0) return null
+
+        return (
+          <div className="evolution-screen">
+            <div className="evolution-content">
+              <h1 className="evolution-title">{tierTitle}</h1>
+              <p className="evolution-subtitle">{tierSubtitle}</p>
+
+              <div className="evolution-grid">
+                {tierOptions.map((option) => (
+                  <EvolutionOption
+                    key={option.type}
+                    option={option}
+                    onSelect={() => {
+                      hapticManager.trigger('success')
+                      audioManager.playSFX('uiClick')
+                      if (socketRef.current) {
+                        socketRef.current.emit('evolve', option.type)
+                        setShowEvolutionTree(false)
+
+                        // Update evolution state
+                        if (!hasEvolved) {
+                          setHasEvolved(true)
+                          hasEvolvedRef.current = true
+
+                          // Check if player should immediately get tier 2 prompt
+                          // (if they jumped past tier 2 threshold before selecting tier 1)
+                          const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+                          if (localPlayer && localPlayer.score >= TIER_2_THRESHOLD) {
+                            // Show tier 2 evolution tree after a short delay
+                            setTimeout(() => {
+                              setShowEvolutionTree(true)
+                            }, 100)
+                          }
+                        } else {
+                          setTier2Evolved(true)
+                          tier2EvolvedRef.current = true
+                        }
+
+                        setCurrentSpikeType(option.type)
+
+                        // Play evolution sound effect
+                        audioManager.playSFX('evolution')
+
+                        // Add evolution effect at player position
+                        const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+                        if (localPlayer) {
+                          evolutionEffectsRef.current.push({
+                            x: localPlayer.x,
+                            y: localPlayer.y,
+                            startTime: Date.now(),
+                            duration: 2000,
+                            spikeType: option.type,
+                          })
+                        }
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {gameState === 'dead' && deathStats && (
         <div className="death-screen">
@@ -3764,6 +5598,651 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Audio Settings Modal */}
+      {showAudioSettings && (
+        <AudioSettings onClose={() => {
+          audioManager.playSFX('uiClick')
+          setShowAudioSettings(false)
+        }} />
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <Settings
+          onClose={() => {
+            audioManager.playSFX('uiClick')
+            setShowSettings(false)
+          }}
+          onKeybindingsChange={(newKeybindings) => {
+            setKeybindings(newKeybindings)
+          }}
+        />
+      )}
+
+      {/* Authentication Notification */}
+      {authNotification && (
+        <div className={`auth-notification ${authNotification.type}`}>
+          {authNotification.message}
+        </div>
+      )}
+
+      {/* Sign Up Modal */}
+      {showSignUp && (
+        <div className="modal-overlay" onClick={() => setShowSignUp(false)}>
+          <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowSignUp(false)}>×</button>
+            <h2 className="auth-modal-title">Create Account</h2>
+            <form onSubmit={(e) => {
+              e.preventDefault()
+              const formData = new FormData(e.currentTarget)
+              const username = formData.get('username') as string
+              const password = formData.get('password') as string
+              const confirmPassword = formData.get('confirmPassword') as string
+              handleSignUp(username, password, confirmPassword)
+            }}>
+              <div className="auth-input-group">
+                <label htmlFor="signup-username">Username</label>
+                <input
+                  id="signup-username"
+                  name="username"
+                  type="text"
+                  placeholder="Enter username"
+                  className="auth-input"
+                  maxLength={20}
+                  required
+                />
+              </div>
+              <div className="auth-input-group">
+                <label htmlFor="signup-password">Password</label>
+                <input
+                  id="signup-password"
+                  name="password"
+                  type="password"
+                  placeholder="Enter password"
+                  className="auth-input"
+                  required
+                />
+              </div>
+              <div className="auth-input-group">
+                <label htmlFor="signup-confirm-password">Confirm Password</label>
+                <input
+                  id="signup-confirm-password"
+                  name="confirmPassword"
+                  type="password"
+                  placeholder="Confirm password"
+                  className="auth-input"
+                  required
+                />
+              </div>
+              <button type="submit" className="auth-submit-button">
+                Sign Up
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Login Modal */}
+      {showLogin && (
+        <div className="modal-overlay" onClick={() => setShowLogin(false)}>
+          <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowLogin(false)}>×</button>
+            <h2 className="auth-modal-title">Login</h2>
+            <form onSubmit={(e) => {
+              e.preventDefault()
+              const formData = new FormData(e.currentTarget)
+              const username = formData.get('username') as string
+              const password = formData.get('password') as string
+              handleLogin(username, password)
+            }}>
+              <div className="auth-input-group">
+                <label htmlFor="login-username">Username</label>
+                <input
+                  id="login-username"
+                  name="username"
+                  type="text"
+                  placeholder="Enter username"
+                  className="auth-input"
+                  required
+                />
+              </div>
+              <div className="auth-input-group">
+                <label htmlFor="login-password">Password</label>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  placeholder="Enter password"
+                  className="auth-input"
+                  required
+                />
+              </div>
+              <button type="submit" className="auth-submit-button">
+                Login
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Settings Modal (Logout) */}
+      {showAuthSettings && (
+        <div className="modal-overlay" onClick={() => setShowAuthSettings(false)}>
+          <div className="auth-modal settings-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowAuthSettings(false)}>×</button>
+            <h2 className="auth-modal-title">Settings</h2>
+
+            <div className="settings-section">
+              <h3 className="settings-section-title">Friends</h3>
+              <p className="settings-section-description">
+                Friends system coming soon! You'll be able to:
+              </p>
+              <ul className="settings-feature-list">
+                <li>✓ Add friends by username</li>
+                <li>✓ See your friends list</li>
+                <li>✓ Accept/decline friend requests</li>
+                <li>✓ Block/unblock users</li>
+                <li>✓ See when friends are online</li>
+              </ul>
+            </div>
+
+            <div className="settings-section">
+              <h3 className="settings-section-title">Account</h3>
+              <div className="settings-info">
+                <p><strong>Username:</strong> {currentUser?.username}</p>
+                <p><strong>Premium Orbs:</strong> {premiumOrbs}</p>
+              </div>
+            </div>
+
+            <button
+              className="logout-button"
+              onClick={() => {
+                hapticManager.trigger('light')
+                audioManager.playSFX('uiClick')
+                setShowAuthSettings(false)
+                setShowLogoutConfirm(true)
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
+          <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+            <h2 className="auth-modal-title">Confirm Logout</h2>
+            <p className="logout-confirm-text">Are you sure you want to logout?</p>
+            <div className="logout-confirm-buttons">
+              <button
+                className="logout-confirm-yes"
+                onClick={() => {
+                  hapticManager.trigger('medium')
+                  audioManager.playSFX('uiClick')
+                  handleLogout()
+                }}
+              >
+                Yes, Logout
+              </button>
+              <button
+                className="logout-confirm-cancel"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowLogoutConfirm(false)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customizations Shop Modal */}
+      {showCustomizations && availableCustomizations && (
+        <div className="modal-overlay" onClick={() => setShowCustomizations(false)}>
+          <div className="customizations-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => {
+              hapticManager.trigger('light')
+              audioManager.playSFX('uiClick')
+              setShowCustomizations(false)
+            }}>×</button>
+
+            <h2 className="customizations-title">Customization Shop</h2>
+
+            <div className="customizations-orbs-balance">
+              <svg className="orbs-icon-large" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="url(#diamondGradient2)"/>
+                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <defs>
+                  <linearGradient id="diamondGradient2" x1="2" y1="2" x2="22" y2="12">
+                    <stop offset="0%" stopColor="#00ffff" />
+                    <stop offset="100%" stopColor="#00d4ff" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <span className="orbs-balance-text">Premium Orbs: <strong>{premiumOrbs}</strong></span>
+            </div>
+
+            <div className="customizations-tabs">
+              <button
+                className={`customizations-tab ${customizationsTab === 'nametags' ? 'active' : ''}`}
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setCustomizationsTab('nametags')
+                }}
+              >
+                Nametags
+              </button>
+              <button
+                className={`customizations-tab ${customizationsTab === 'spikes' ? 'active' : ''}`}
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setCustomizationsTab('spikes')
+                }}
+              >
+                Spikes
+              </button>
+            </div>
+
+            <div className="customizations-grid">
+              {customizationsTab === 'nametags' ? (
+                availableCustomizations.nametags.map((item: any) => {
+                  const isOwned = ownedCustomizations.includes(item.id)
+                  const isActive = activeNametag === item.id
+                  const canAfford = premiumOrbs >= item.price
+
+                  return (
+                    <div key={item.id} className={`customization-card ${isActive ? 'active' : ''}`}>
+                      <div className="customization-preview nametag-preview" style={item.style}>
+                        {currentUser?.username || 'Preview'}
+                      </div>
+                      <h3 className="customization-name">{item.name}</h3>
+                      <p className="customization-description">{item.description}</p>
+                      <div className="customization-price">
+                        {item.price === 0 ? 'Free' : `${item.price} Orbs`}
+                      </div>
+                      {isActive ? (
+                        <button className="customization-button equipped" disabled>
+                          ✓ Equipped
+                        </button>
+                      ) : isOwned ? (
+                        <button
+                          className="customization-button equip"
+                          onClick={() => {
+                            hapticManager.trigger('medium')
+                            audioManager.playSFX('uiClick')
+                            handleEquipCustomization(item.id, 'nametag')
+                          }}
+                        >
+                          Equip
+                        </button>
+                      ) : (
+                        <button
+                          className={`customization-button purchase ${!canAfford ? 'disabled' : ''}`}
+                          onClick={() => {
+                            if (canAfford) {
+                              hapticManager.trigger('medium')
+                              audioManager.playSFX('uiClick')
+                              handlePurchaseCustomization(item.id, item.price)
+                            }
+                          }}
+                          disabled={!canAfford}
+                        >
+                          {canAfford ? 'Purchase' : 'Insufficient Orbs'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
+              ) : (
+                availableCustomizations.spikes.map((item: any) => {
+                  const isOwned = ownedCustomizations.includes(item.id)
+                  const isActive = activeSpike === item.id
+                  const canAfford = premiumOrbs >= item.price
+
+                  return (
+                    <div key={item.id} className={`customization-card ${isActive ? 'active' : ''}`}>
+                      <div className="customization-preview spike-preview">
+                        <svg className="spike-preview-svg" viewBox="0 0 100 100" width="60" height="60">
+                          <defs>
+                            <radialGradient id={`spikeGrad-${item.id}`}>
+                              <stop offset="0%" stopColor={item.effect.color || '#00ffff'} stopOpacity="0.8" />
+                              <stop offset="100%" stopColor={item.effect.color || '#00ffff'} stopOpacity="0.2" />
+                            </radialGradient>
+                          </defs>
+                          <circle cx="50" cy="50" r="20" fill={`url(#spikeGrad-${item.id})`} />
+                          <g className="spike-spikes">
+                            {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => {
+                              const rad = (angle * Math.PI) / 180
+                              const x1 = 50 + Math.cos(rad) * 20
+                              const y1 = 50 + Math.sin(rad) * 20
+                              const x2 = 50 + Math.cos(rad) * 35
+                              const y2 = 50 + Math.sin(rad) * 35
+                              return (
+                                <line
+                                  key={i}
+                                  x1={x1}
+                                  y1={y1}
+                                  x2={x2}
+                                  y2={y2}
+                                  stroke={item.effect.color || '#00ffff'}
+                                  strokeWidth="3"
+                                  strokeLinecap="round"
+                                />
+                              )
+                            })}
+                          </g>
+                        </svg>
+                      </div>
+                      <h3 className="customization-name">{item.name}</h3>
+                      <p className="customization-description">{item.description}</p>
+                      <div className="customization-price">
+                        {item.price === 0 ? 'Free' : `${item.price} Orbs`}
+                      </div>
+                      {isActive ? (
+                        <button className="customization-button equipped" disabled>
+                          ✓ Equipped
+                        </button>
+                      ) : isOwned ? (
+                        <button
+                          className="customization-button equip"
+                          onClick={() => {
+                            hapticManager.trigger('medium')
+                            audioManager.playSFX('uiClick')
+                            handleEquipCustomization(item.id, 'spike')
+                          }}
+                        >
+                          Equip
+                        </button>
+                      ) : (
+                        <button
+                          className={`customization-button purchase ${!canAfford ? 'disabled' : ''}`}
+                          onClick={() => {
+                            if (canAfford) {
+                              hapticManager.trigger('medium')
+                              audioManager.playSFX('uiClick')
+                              handlePurchaseCustomization(item.id, item.price)
+                            }
+                          }}
+                          disabled={!canAfford}
+                        >
+                          {canAfford ? 'Purchase' : 'Insufficient Orbs'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Tutorial Modal - only on menu screen */}
+      {gameState === 'menu' && showHowToPlay && (
+        <div className="modal-overlay" onClick={() => {
+          audioManager.playSFX('uiClick')
+          setShowHowToPlay(false)
+          setTutorialStep(0)
+        }}>
+          <div className="tutorial-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => {
+              audioManager.playSFX('uiClick')
+              setShowHowToPlay(false)
+              setTutorialStep(0)
+            }}>×</button>
+
+            {/* Step 1: Welcome */}
+            {tutorialStep === 0 && (
+              <div className="tutorial-step">
+                <div className="tutorial-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M12 16v-4"></path>
+                    <path d="M12 8h.01"></path>
+                  </svg>
+                </div>
+                <h2>Welcome to burrs.io!</h2>
+                <p className="tutorial-text">Learn the basics in just a few steps</p>
+                <button className="tutorial-button" onClick={() => {
+                  audioManager.playSFX('uiClick')
+                  setTutorialStep(1)
+                }}>
+                  Start Tutorial
+                </button>
+                <button className="tutorial-skip" onClick={() => {
+                  audioManager.playSFX('uiClick')
+                  setShowHowToPlay(false)
+                  setTutorialStep(0)
+                }}>
+                  Skip
+                </button>
+              </div>
+            )}
+
+            {/* Step 2: Movement */}
+            {tutorialStep === 1 && (
+              <div className="tutorial-step">
+                <div className="tutorial-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+                <h2>Movement</h2>
+                <p className="tutorial-text">Use WASD keys to move your spike around</p>
+                <div className="keyboard-visual">
+                  <div className="key-row">
+                    <div className="key">W</div>
+                  </div>
+                  <div className="key-row">
+                    <div className="key">A</div>
+                    <div className="key">S</div>
+                    <div className="key">D</div>
+                  </div>
+                </div>
+                <p className="tutorial-hint">Move in any direction to navigate the arena</p>
+                <div className="tutorial-nav">
+                  <button className="tutorial-button-secondary" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setTutorialStep(0)
+                  }}>
+                    Back
+                  </button>
+                  <button className="tutorial-button" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setTutorialStep(2)
+                  }}>
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Boost */}
+            {tutorialStep === 2 && (
+              <div className="tutorial-step">
+                <div className="tutorial-icon boost-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                </div>
+                <h2>Speed Boost</h2>
+                <p className="tutorial-text">Press B to activate a speed boost</p>
+                <div className="keyboard-visual">
+                  <div className="key-row">
+                    <div className="key large-key">B</div>
+                  </div>
+                </div>
+                <p className="tutorial-hint">Use boost to escape danger or catch food!</p>
+                <div className="tutorial-nav">
+                  <button className="tutorial-button-secondary" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setTutorialStep(1)
+                  }}>
+                    Back
+                  </button>
+                  <button className="tutorial-button" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setTutorialStep(3)
+                  }}>
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Objective */}
+            {tutorialStep === 3 && (
+              <div className="tutorial-step">
+                <div className="tutorial-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <circle cx="12" cy="12" r="6"></circle>
+                    <circle cx="12" cy="12" r="2"></circle>
+                  </svg>
+                </div>
+                <h2>Objective</h2>
+                <p className="tutorial-text">Eat food orbs to grow bigger and stronger</p>
+                <div className="objective-visual">
+                  <div className="orb small-orb"></div>
+                  <div className="orb medium-orb"></div>
+                  <div className="orb large-orb"></div>
+                </div>
+                <p className="tutorial-hint">Bigger spikes can defeat smaller ones!</p>
+                <div className="tutorial-nav">
+                  <button className="tutorial-button-secondary" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setTutorialStep(2)
+                  }}>
+                    Back
+                  </button>
+                  <button className="tutorial-button" onClick={() => {
+                    audioManager.playSFX('uiClick')
+                    setShowHowToPlay(false)
+                    setTutorialStep(0)
+                  }}>
+                    Got it!
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* In-Game Controls Guide */}
+      {gameState === 'playing' && showControlsGuide && (
+        <div className="controls-guide-overlay">
+          <div className="controls-guide">
+            <h3>Controls</h3>
+            <div className="controls-list">
+              <div className="control-row">
+                <kbd>{keybindings.moveUp.toUpperCase()} {keybindings.moveLeft.toUpperCase()} {keybindings.moveDown.toUpperCase()} {keybindings.moveRight.toUpperCase()}</kbd> Move
+              </div>
+              <div className="control-row"><kbd>{keybindings.speedBoost.toUpperCase()}</kbd> Speed Boost</div>
+              <div className="control-row"><kbd>{keybindings.specialAbility.toUpperCase()}</kbd> Special Ability</div>
+              <div className="control-row"><kbd>{keybindings.chat === 'Enter' ? '↵ Enter' : keybindings.chat.toUpperCase()}</kbd> Chat</div>
+              <div className="control-row"><kbd>{keybindings.afkToggle.toUpperCase()}</kbd> Toggle AFK (must be in base)</div>
+              <div className="control-row"><kbd>{keybindings.controlsGuide.toUpperCase()}</kbd> Toggle This Guide</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disconnect Screen */}
+      {showDisconnectScreen && (
+        <div className="death-screen">
+          <div className="death-content" style={{ textAlign: 'center' }}>
+            <h1 style={{ color: '#ff4444', marginBottom: '20px' }}>Disconnected</h1>
+            <div className="death-stats">
+              <p style={{ fontSize: '18px', marginBottom: '30px', color: '#ffffff' }}>Connection to server lost</p>
+              {deathStats && (
+                <>
+                  <p>Final Score: <span className="stat-value">{deathStats.score.toLocaleString()}</span></p>
+                  <p>Kills: <span className="stat-value">{deathStats.kills}</span></p>
+                  <p>Time Survived: <span className="stat-value">{deathStats.timeSurvived}</span></p>
+                </>
+              )}
+            </div>
+            <div className="death-buttons">
+              <button
+                className="respawn-button"
+                onClick={() => {
+                  hapticManager.trigger('medium')
+                  audioManager.playSFX('uiClick')
+                  // Reconnect behaves like a clean respawn attempt using the same
+                  // name. We let the normal socket effect handle creating the
+                  // connection and joining, which keeps all socket wiring
+                  // consistent.
+                  setShowDisconnectScreen(false)
+
+                  // Ensure any existing socket is fully disconnected first
+                  if (socketRef.current) {
+                    socketRef.current.disconnect()
+                    socketRef.current = null
+                  }
+
+                  // Reset death state so the UI is clean when we come back
+                  setDeathStats(null)
+                  setDeathAnimationProgress(0)
+
+                  // Move into a dedicated connecting state so the socket effect
+                  // reliably creates a fresh connection even if we were already
+                  // in "playing" when the disconnect happened.
+                  setGameState('connecting')
+                }}
+              >
+                Reconnect
+              </button>
+              <button
+                className="respawn-button"
+                style={{
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: '2px solid rgba(255, 255, 255, 0.3)',
+                  boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)',
+                }}
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowDisconnectScreen(false)
+                  setGameState('menu')
+                  if (socketRef.current) {
+                    socketRef.current.disconnect()
+                    socketRef.current = null
+                  }
+                }}
+              >
+                Go to Homepage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Server Selector Modal */}
+      {showServerSelector && (
+        <ServerSelector
+          onSelectServer={(serverUrl) => {
+            setSelectedServerUrl(serverUrl)
+            setShowServerSelector(false)
+            audioManager.playSFX('uiClick')
+            // Save selected server to localStorage
+            localStorage.setItem('selectedServer', serverUrl)
+          }}
+          onClose={() => {
+            setShowServerSelector(false)
+            audioManager.playSFX('uiClick')
+          }}
+        />
       )}
     </div>
   )

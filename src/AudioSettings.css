@@ -1,0 +1,328 @@
+/* Audio Settings Overlay - Simple and clean */
+.audio-settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.audio-settings-panel {
+  background-color: rgba(15, 15, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 380px;
+  max-height: 70vh;
+  overflow: hidden;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+}
+
+.audio-settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.audio-settings-header h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(230, 247, 255, 0.95);
+  margin: 0;
+  font-weight: 600;
+}
+
+.close-button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.close-button:hover {
+  color: #fff;
+}
+
+.audio-settings-content {
+  padding: 16px;
+  overflow-y: auto;
+  background-color: rgba(5, 10, 30, 0.98);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-group label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: rgba(230, 247, 255, 0.95);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.setting-label {
+  color: rgba(230, 247, 255, 0.95);
+  font-weight: 500;
+  font-size: 12px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.setting-value {
+  color: #fff;
+  font-weight: 600;
+  min-width: 40px;
+  text-align: right;
+  font-size: 12px;
+}
+
+.loading-indicator {
+  color: rgba(230, 247, 255, 0.8);
+  font-size: 11px;
+  text-align: center;
+  padding: 8px;
+  background: rgba(0, 229, 255, 0.1);
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+/* Volume Sliders - Simple style */
+.volume-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(230, 247, 255, 0.95);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.volume-slider::-webkit-slider-thumb:hover {
+  background: #fff;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(230, 247, 255, 0.95);
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.volume-slider::-moz-range-thumb:hover {
+  background: #fff;
+}
+
+/* Toggle Switches - Simple style */
+.toggle-group {
+  margin: 6px 0;
+}
+
+.toggle-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  position: relative;
+  padding: 6px 0;
+}
+
+.toggle-label span:first-child {
+  color: rgba(230, 247, 255, 0.95);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.toggle-checkbox {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-slider {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  transition: all 0.2s ease;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: rgba(230, 247, 255, 0.95);
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.toggle-checkbox:checked + .toggle-slider {
+  background: rgba(230, 247, 255, 0.3);
+}
+
+.toggle-checkbox:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+/* Music Source Buttons - Simple style */
+.music-source-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.source-button {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: rgba(230, 247, 255, 0.8);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.source-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(230, 247, 255, 0.95);
+}
+
+.source-button.active {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+/* URL Input - Simple style */
+.url-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: rgba(230, 247, 255, 0.95);
+  font-size: 11px;
+  outline: none;
+  transition: all 0.2s ease;
+  margin-top: 6px;
+}
+
+.url-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.url-input:focus {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Apply Button - Simple style */
+.apply-button {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.apply-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.apply-button:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Scrollbar Styling - Simple */
+.audio-settings-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.audio-settings-content::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.audio-settings-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.audio-settings-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .audio-settings-panel {
+    width: 95%;
+    padding: 20px;
+    max-height: 90vh;
+  }
+
+  .audio-settings-header h2 {
+    font-size: 24px;
+  }
+
+  .music-source-buttons {
+    flex-direction: column;
+  }
+
+  .source-button {
+    width: 100%;
+  }
+}
+
