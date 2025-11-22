@@ -2644,16 +2644,88 @@ function App() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    // Disable image smoothing to prevent blur during fast movement
+    ctx.imageSmoothingEnabled = false
+
     // Set canvas size
     const resizeCanvas = () => {
       canvas.width = window.innerWidth
       canvas.height = window.innerHeight
+      // Re-disable image smoothing after canvas resize (it resets on resize)
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false
+      }
     }
     resizeCanvas()
     window.addEventListener('resize', resizeCanvas)
 
     return () => {
       window.removeEventListener('resize', resizeCanvas)
+    }
+  }, [])
+
+  // Prevent FOV hack via browser zoom
+  useEffect(() => {
+    // Prevent keyboard zoom shortcuts (Cmd/Ctrl + Plus/Minus/0)
+    const preventZoomKeys = (e: KeyboardEvent) => {
+      // Check for Ctrl or Cmd key
+      if (e.ctrlKey || e.metaKey) {
+        // Prevent zoom in: Ctrl/Cmd + Plus or Ctrl/Cmd + Equals (same key)
+        if (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd') {
+          e.preventDefault()
+          return false
+        }
+        // Prevent zoom out: Ctrl/Cmd + Minus
+        if (e.key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+          e.preventDefault()
+          return false
+        }
+        // Prevent reset zoom: Ctrl/Cmd + 0
+        if (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') {
+          e.preventDefault()
+          return false
+        }
+      }
+    }
+
+    // Prevent mouse wheel zoom (Ctrl/Cmd + scroll)
+    const preventWheelZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        return false
+      }
+    }
+
+    // Prevent pinch-to-zoom on touch devices
+    const preventTouchZoom = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault()
+        return false
+      }
+    }
+
+    // Prevent gesturestart (Safari pinch-to-zoom)
+    const preventGesture = (e: Event) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Add event listeners
+    document.addEventListener('keydown', preventZoomKeys, { passive: false })
+    document.addEventListener('wheel', preventWheelZoom, { passive: false })
+    document.addEventListener('touchmove', preventTouchZoom, { passive: false })
+    document.addEventListener('gesturestart', preventGesture, { passive: false })
+    document.addEventListener('gesturechange', preventGesture, { passive: false })
+    document.addEventListener('gestureend', preventGesture, { passive: false })
+
+    return () => {
+      document.removeEventListener('keydown', preventZoomKeys)
+      document.removeEventListener('wheel', preventWheelZoom)
+      document.removeEventListener('touchmove', preventTouchZoom)
+      document.removeEventListener('gesturestart', preventGesture)
+      document.removeEventListener('gesturechange', preventGesture)
+      document.removeEventListener('gestureend', preventGesture)
     }
   }, [])
 
@@ -3758,10 +3830,23 @@ function App() {
         targetCameraY = localPlayer.y - canvas.height / 2
       }
 
-      // Smooth camera interpolation (lerp) to prevent sudden jumps
-      const lerpFactor = 0.15 // Lower = smoother but slower, higher = faster but jerkier
-      cameraRef.current.x += (targetCameraX - cameraRef.current.x) * lerpFactor
-      cameraRef.current.y += (targetCameraY - cameraRef.current.y) * lerpFactor
+      // Adaptive camera interpolation (lerp) - faster during high-speed movement to reduce blur
+      // Calculate camera distance to target to determine movement speed
+      const cameraDeltaX = targetCameraX - cameraRef.current.x
+      const cameraDeltaY = targetCameraY - cameraRef.current.y
+      const cameraDistance = Math.sqrt(cameraDeltaX * cameraDeltaX + cameraDeltaY * cameraDeltaY)
+
+      // Adaptive lerp: higher factor when moving fast (reduces blur), lower when slow (smoother)
+      // Distance < 50: 0.2 (smooth), Distance 50-200: 0.2-0.4, Distance > 200: 0.5 (fast, no blur)
+      let lerpFactor = 0.2 // Base lerp factor
+      if (cameraDistance > 200) {
+        lerpFactor = 0.5 // Fast movement - high responsiveness to prevent blur
+      } else if (cameraDistance > 50) {
+        lerpFactor = 0.2 + ((cameraDistance - 50) / 150) * 0.3 // Interpolate between 0.2 and 0.5
+      }
+
+      cameraRef.current.x += cameraDeltaX * lerpFactor
+      cameraRef.current.y += cameraDeltaY * lerpFactor
 
       let cameraX = cameraRef.current.x
       let cameraY = cameraRef.current.y
@@ -4468,13 +4553,26 @@ function App() {
 
       ctx.restore()
 
-      // Draw damage flash overlay in screen space
+      // Draw damage flash vignette overlay in screen space
       if (damageFlashRef.current.active) {
-        const elapsed = currentTime - damageFlashRef.current.startTime
+        const elapsed = currentTimeMs - damageFlashRef.current.startTime
         if (elapsed < damageFlashRef.current.duration) {
           const progress = elapsed / damageFlashRef.current.duration
-          const opacity = (1 - progress) * 0.3
-          ctx.fillStyle = `rgba(255, 0, 0, ${opacity})`
+          const vignetteStrength = (1 - progress) * 0.5 // Max 50% opacity, fades out
+
+          // Create radial gradient vignette (transparent center, red edges)
+          const gradient = ctx.createRadialGradient(
+            canvas.width / 2,
+            canvas.height / 2,
+            0,
+            canvas.width / 2,
+            canvas.height / 2,
+            Math.max(canvas.width, canvas.height) * 0.7
+          )
+          gradient.addColorStop(0, 'rgba(255, 0, 0, 0)') // Transparent center
+          gradient.addColorStop(1, `rgba(255, 0, 0, ${vignetteStrength})`) // Red edges
+
+          ctx.fillStyle = gradient
           ctx.fillRect(0, 0, canvas.width, canvas.height)
         } else {
           damageFlashRef.current.active = false
