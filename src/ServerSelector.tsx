@@ -20,13 +20,13 @@ const SERVERS: Omit<ServerInfo, 'playerCount' | 'ping' | 'status'>[] = [
   {
     name: 'US Server',
     region: 'North America',
-    url: 'http://34.42.22.179:5174',
+    url: 'https://burrs.io',
     maxPlayers: 50
   },
   {
     name: 'EU Server',
     region: 'Europe',
-    url: 'http://130.211.106.44:5174',
+    url: 'http://eu.burrs.io',
     maxPlayers: 50
   }
 ]
