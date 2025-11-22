@@ -149,7 +149,9 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: [
-    "https://burrs-io-client.onrender.com",
+    "https://burrs.io",
+    "https://www.burrs.io",
+    "https://eu.burrs.io",
     "http://localhost:5173",
     "http://localhost:5174"
   ],
@@ -626,7 +628,9 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: [
-      "https://burrs-io-client.onrender.com",
+      "https://burrs.io",
+      "https://www.burrs.io",
+      "https://eu.burrs.io",
       "http://localhost:5173",
       "http://localhost:5174"
     ],
