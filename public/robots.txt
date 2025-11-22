@@ -1,0 +1,8 @@
+# robots.txt for burrs.io
+
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://burrs.io/sitemap.xml
+

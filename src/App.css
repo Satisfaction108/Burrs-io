@@ -2473,3 +2473,209 @@
     padding: 10px 16px;
   }
 }
+
+/* Bottom-left UI buttons */
+.bottom-left-buttons {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  gap: 12px;
+  z-index: 50;
+}
+
+.bottom-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  background: rgba(10, 10, 25, 0.95);
+  border: 2px solid rgba(0, 255, 255, 0.3);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(0, 255, 255, 0.15);
+}
+
+.bottom-button:hover {
+  background: rgba(10, 10, 25, 1);
+  border-color: rgba(0, 255, 255, 0.5);
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.6),
+    0 0 30px rgba(0, 255, 255, 0.25);
+}
+
+.bottom-button:active {
+  transform: translateY(0);
+}
+
+.bottom-button svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.bug-button svg {
+  fill: #ff4655;
+}
+
+.discord-button svg {
+  fill: #5865F2;
+}
+
+/* Bug Report Modal */
+.bug-modal {
+  background: rgba(10, 10, 25, 0.98);
+  border-radius: 16px;
+  border: 2px solid rgba(0, 255, 255, 0.3);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.9),
+    0 0 40px rgba(0, 255, 255, 0.2);
+  padding: 32px;
+  max-width: 500px;
+  width: 90%;
+  backdrop-filter: blur(20px);
+}
+
+.bug-modal-title {
+  color: #00ffff;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 24px;
+  text-align: center;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.bug-input-group {
+  margin-bottom: 20px;
+}
+
+.bug-input-group label {
+  display: block;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.bug-input,
+.bug-textarea {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.bug-textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.bug-input:focus,
+.bug-textarea:focus {
+  outline: none;
+  border-color: rgba(0, 255, 255, 0.5);
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+}
+
+.bug-input::placeholder,
+.bug-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.bug-char-count {
+  text-align: right;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
+}
+
+.bug-char-count.error {
+  color: #ff4655;
+}
+
+.bug-modal-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.bug-submit-button,
+.bug-cancel-button {
+  flex: 1;
+  padding: 14px 24px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 2px solid transparent;
+}
+
+.bug-submit-button {
+  background: linear-gradient(135deg, #00d4ff 0%, #00ffff 100%);
+  color: #0a0a19;
+  border-color: rgba(0, 255, 255, 0.3);
+}
+
+.bug-submit-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 255, 255, 0.4);
+}
+
+.bug-submit-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bug-cancel-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.bug-cancel-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Mobile responsive for bottom buttons */
+@media (max-width: 768px) {
+  .bottom-left-buttons {
+    bottom: 16px;
+    left: 16px;
+    gap: 8px;
+  }
+
+  .bottom-button {
+    padding: 10px 14px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .bottom-button svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .bug-modal {
+    padding: 24px;
+    max-width: 90%;
+  }
+
+  .bug-modal-title {
+    font-size: 24px;
+  }
+}

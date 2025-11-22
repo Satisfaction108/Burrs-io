@@ -2465,6 +2465,12 @@ function App() {
   const [activeSpike, setActiveSpike] = useState<string | null>(null)
   const [availableCustomizations, setAvailableCustomizations] = useState<any>(null)
 
+  // Bug report state
+  const [showBugReport, setShowBugReport] = useState(false)
+  const [bugDescription, setBugDescription] = useState('')
+  const [bugSteps, setBugSteps] = useState('')
+  const [bugExpected, setBugExpected] = useState('')
+
   const hasEvolvedRef = useRef(false)
   const tier2EvolvedRef = useRef(false)
   // Health and score are now managed server-side and received via player object
@@ -2833,13 +2839,6 @@ function App() {
       if (key === keybindings.specialAbility.toLowerCase()) {
         if (!e.repeat) {
           triggerAbility()
-        }
-        e.preventDefault()
-      }
-      // Debug hack: X key adds 10000 points
-      if (key === 'x') {
-        if (!e.repeat && socketRef.current) {
-          socketRef.current.emit('debugAddScore', 10000)
         }
         e.preventDefault()
       }
@@ -3499,6 +3498,13 @@ function App() {
               console.error('❌ Error saving premium orbs:', err)
             })
           }
+        }
+
+        // Reset ability cooldown on death
+        setAbilityOnCooldown(false)
+        if (abilityCooldownTimeoutRef.current !== null) {
+          window.clearTimeout(abilityCooldownTimeoutRef.current)
+          abilityCooldownTimeoutRef.current = null
         }
 
         // Start death animation
@@ -4574,6 +4580,13 @@ function App() {
     setShowEvolutionTree(false)
     setCurrentSpikeType('Spike')
 
+    // Reset ability cooldown state
+    setAbilityOnCooldown(false)
+    if (abilityCooldownTimeoutRef.current !== null) {
+      window.clearTimeout(abilityCooldownTimeoutRef.current)
+      abilityCooldownTimeoutRef.current = null
+    }
+
     // Request respawn from server
     if (socketRef.current) {
       socketRef.current.emit('respawn', displayName)
@@ -4746,6 +4759,48 @@ function App() {
 
     // Show notification
     showAuthNotification('Logged out successfully', 'success')
+  }
+
+  // Bug report handler
+  const handleBugReport = async () => {
+    // Validate description
+    if (bugDescription.trim().length < 10) {
+      showAuthNotification('Bug description must be at least 10 characters', 'error')
+      return
+    }
+
+    try {
+      const bugReport = {
+        description: bugDescription.trim(),
+        steps: bugSteps.trim(),
+        expected: bugExpected.trim(),
+        username: currentUser?.username || 'Guest',
+        userAgent: navigator.userAgent,
+        url: window.location.href,
+      }
+
+      const response = await fetch(`${selectedServerUrl}/api/bugs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bugReport),
+      })
+
+      if (response.ok) {
+        showAuthNotification('Bug report submitted successfully! Thank you!', 'success')
+        // Reset form
+        setBugDescription('')
+        setBugSteps('')
+        setBugExpected('')
+        setShowBugReport(false)
+      } else {
+        showAuthNotification('Failed to submit bug report. Please try again.', 'error')
+      }
+    } catch (error) {
+      console.error('Bug report error:', error)
+      showAuthNotification('Failed to submit bug report. Please try again.', 'error')
+    }
   }
 
   // Customization handlers
@@ -5419,6 +5474,38 @@ function App() {
                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
               </svg>
               Audio Settings
+            </button>
+          </div>
+
+          {/* Bottom-left buttons - visible on menu screen */}
+          <div className="bottom-left-buttons">
+            <button
+              className="bottom-button bug-button"
+              onClick={() => {
+                hapticManager.trigger('light')
+                audioManager.playSFX('uiClick')
+                setShowBugReport(true)
+              }}
+              title="Report a Bug"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>
+              </svg>
+              Report a Bug
+            </button>
+            <button
+              className="bottom-button discord-button"
+              onClick={() => {
+                hapticManager.trigger('light')
+                audioManager.playSFX('uiClick')
+                window.open('https://discord.gg/cquXPupzWq', '_blank', 'noopener,noreferrer')
+              }}
+              title="Join Discord"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+              </svg>
+              Join Discord
             </button>
           </div>
         </div>
@@ -6243,6 +6330,82 @@ function App() {
             audioManager.playSFX('uiClick')
           }}
         />
+      )}
+
+      {/* Bug Report Modal */}
+      {showBugReport && (
+        <div className="modal-overlay" onClick={() => setShowBugReport(false)}>
+          <div className="bug-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowBugReport(false)}>×</button>
+            <h2 className="bug-modal-title">Report a Bug</h2>
+
+            <div className="bug-input-group">
+              <label htmlFor="bug-description">What bug did you encounter? *</label>
+              <textarea
+                id="bug-description"
+                className="bug-textarea"
+                placeholder="Describe the bug you encountered..."
+                value={bugDescription}
+                onChange={(e) => setBugDescription(e.target.value)}
+                maxLength={500}
+                required
+              />
+              <div className={`bug-char-count ${bugDescription.length < 10 ? 'error' : ''}`}>
+                {bugDescription.length}/500 (minimum 10 characters)
+              </div>
+            </div>
+
+            <div className="bug-input-group">
+              <label htmlFor="bug-steps">Steps to reproduce (optional)</label>
+              <textarea
+                id="bug-steps"
+                className="bug-textarea"
+                placeholder="1. Go to...\n2. Click on...\n3. See error..."
+                value={bugSteps}
+                onChange={(e) => setBugSteps(e.target.value)}
+                maxLength={500}
+              />
+              <div className="bug-char-count">{bugSteps.length}/500</div>
+            </div>
+
+            <div className="bug-input-group">
+              <label htmlFor="bug-expected">Expected vs Actual behavior (optional)</label>
+              <textarea
+                id="bug-expected"
+                className="bug-textarea"
+                placeholder="Expected: ...\nActual: ..."
+                value={bugExpected}
+                onChange={(e) => setBugExpected(e.target.value)}
+                maxLength={500}
+              />
+              <div className="bug-char-count">{bugExpected.length}/500</div>
+            </div>
+
+            <div className="bug-modal-buttons">
+              <button
+                className="bug-cancel-button"
+                onClick={() => {
+                  hapticManager.trigger('light')
+                  audioManager.playSFX('uiClick')
+                  setShowBugReport(false)
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="bug-submit-button"
+                onClick={() => {
+                  hapticManager.trigger('medium')
+                  audioManager.playSFX('uiClick')
+                  handleBugReport()
+                }}
+                disabled={bugDescription.trim().length < 10}
+              >
+                Submit Report
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

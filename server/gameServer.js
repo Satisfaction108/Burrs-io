@@ -3,11 +3,143 @@ import { Server } from 'socket.io';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+import { MongoClient, ObjectId } from 'mongodb';
 import authRoutes from './routes/auth.js';
 import customizationsRoutes from './routes/customizations.js';
 import gameRoutes from './routes/game.js';
+import bugsRoutes from './routes/bugs.js';
 
 dotenv.config();
+
+// MongoDB connection for saving player stats
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+let db;
+let usersCollection;
+
+// Connect to MongoDB
+async function connectDB() {
+  try {
+    await mongoClient.connect();
+    db = mongoClient.db('burrs-io');
+    usersCollection = db.collection('users');
+    console.log('✅ Game server connected to MongoDB');
+  } catch (error) {
+    console.error('❌ MongoDB connection error in game server:', error);
+  }
+}
+
+connectDB();
+
+// Helper function to save player stats to database
+async function savePlayerStats(player, sessionStats) {
+  // Only save stats for authenticated users
+  if (!player.userId || !usersCollection) return;
+
+  try {
+    // Validate ObjectId
+    if (!ObjectId.isValid(player.userId)) {
+      console.error(`Invalid userId format: ${player.userId}`);
+      return;
+    }
+
+    const userId = new ObjectId(player.userId);
+
+    // Calculate session playtime in seconds
+    const sessionPlaytime = Math.floor((Date.now() - player.spawnTime) / 1000);
+
+    // Update user stats in database
+    await usersCollection.updateOne(
+      { _id: userId },
+      {
+        $inc: {
+          totalKills: sessionStats.kills || 0,
+          totalDeaths: sessionStats.deaths || 0,
+          totalPlaytime: sessionPlaytime,
+          totalFoodEaten: sessionStats.foodEaten || 0,
+          totalPremiumOrbsEaten: sessionStats.premiumOrbsEaten || 0,
+          totalScore: sessionStats.score || 0,
+        },
+        $set: {
+          lastPlayed: new Date()
+        }
+      }
+    );
+
+    console.log(`💾 Saved stats for user ${player.username} (${player.userId})`);
+  } catch (error) {
+    console.error('Error saving player stats:', error);
+  }
+}
+
+// Helper function to save evolution progress to database
+async function saveEvolutionProgress(player) {
+  // Only save evolution progress for authenticated users
+  if (!player.userId || !usersCollection) return;
+
+  try {
+    // Validate ObjectId
+    if (!ObjectId.isValid(player.userId)) {
+      console.error(`Invalid userId format: ${player.userId}`);
+      return;
+    }
+
+    const userId = new ObjectId(player.userId);
+
+    // Save current evolution state
+    await usersCollection.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          savedEvolution: {
+            spikeType: player.spikeType || 'Spike',
+            hasEvolved: player.hasEvolved || false,
+            tier2Evolved: player.tier2Evolved || false,
+            score: player.score || 0,
+            evolutionScoreOffset: player.evolutionScoreOffset || 0,
+            savedAt: new Date()
+          }
+        }
+      }
+    );
+
+    console.log(`💾 Saved evolution progress for user ${player.username} (${player.userId})`);
+  } catch (error) {
+    console.error('Error saving evolution progress:', error);
+  }
+}
+
+// Helper function to load evolution progress from database
+async function loadEvolutionProgress(userId) {
+  if (!userId || !usersCollection) return null;
+
+  try {
+    // Validate ObjectId
+    if (!ObjectId.isValid(userId)) {
+      console.error(`Invalid userId format: ${userId}`);
+      return null;
+    }
+
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+
+    if (user && user.savedEvolution) {
+      // Check if saved evolution is recent (within 24 hours)
+      const savedAt = new Date(user.savedEvolution.savedAt);
+      const hoursSinceSaved = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
+
+      if (hoursSinceSaved < 24) {
+        console.log(`✅ Loaded evolution progress for user ${userId}`);
+        return user.savedEvolution;
+      } else {
+        console.log(`⏱️ Evolution progress expired for user ${userId} (${hoursSinceSaved.toFixed(1)} hours old)`);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading evolution progress:', error);
+  }
+
+  return null;
+}
 
 const PORT = process.env.PORT || 5174;
 
@@ -29,6 +161,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/customizations', customizationsRoutes);
 app.use('/api/game', gameRoutes);
+app.use('/api/bugs', bugsRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -530,7 +663,7 @@ io.on('connection', (socket) => {
   ipToSocketId.set(clientIP, socket.id);
 
   // Handle player join
-  socket.on('join', (data) => {
+  socket.on('join', async (data) => {
     // Support both old format (string) and new format (object with customizations)
     let playerName = '';
     let activeNametag = null;
@@ -561,6 +694,24 @@ io.on('connection', (socket) => {
         message: 'No bad words allowed in your name. Please choose a different name.'
       });
       return;
+    }
+
+    // IP-based duplicate connection prevention (only for guest users)
+    // Authenticated users can have multiple connections (e.g., multiple devices)
+    if (!authenticatedUserId) {
+      // Check if there's already an active player from this IP
+      const existingSocketId = ipToSocketId.get(clientIP);
+      if (existingSocketId && existingSocketId !== socket.id) {
+        const existingPlayer = players.get(existingSocketId);
+        // Only block if the existing player is active (not dying, not in disconnected state)
+        if (existingPlayer && !existingPlayer.isDying) {
+          socket.emit('joinError', {
+            message: 'You already have an active game session. Please close other tabs or wait for your session to end.'
+          });
+          console.log(`❌ Blocked duplicate connection from IP ${clientIP} (existing session: ${existingSocketId})`);
+          return;
+        }
+      }
     }
 
     // Check for reconnection - prioritize user ID for authenticated users, then fall back to IP
@@ -708,6 +859,19 @@ io.on('connection', (socket) => {
       activeNametag: activeNametag || 'nametag_default', // Active nametag customization
       activeSpike: activeSpike || 'spike_default', // Active spike customization
     };
+
+    // Load saved evolution progress for authenticated users
+    if (authenticatedUserId) {
+      const savedEvolution = await loadEvolutionProgress(authenticatedUserId);
+      if (savedEvolution) {
+        player.spikeType = savedEvolution.spikeType;
+        player.hasEvolved = savedEvolution.hasEvolved;
+        player.tier2Evolved = savedEvolution.tier2Evolved;
+        player.score = savedEvolution.score;
+        player.evolutionScoreOffset = savedEvolution.evolutionScoreOffset;
+        console.log(`✅ Restored evolution progress for ${player.username}: ${player.spikeType} (Score: ${player.score})`);
+      }
+    }
 
     players.set(socket.id, player);
 
@@ -943,36 +1107,6 @@ io.on('connection', (socket) => {
     });
 
     console.log(`Player ${player.username} started AFK activation`);
-  });
-
-  // Debug command: Set score to specific value
-  socket.on('debugSetScore', (targetScore) => {
-    const player = players.get(socket.id);
-    if (!player || player.isDying) return;
-
-    // Validate score is a number
-    if (typeof targetScore === 'number' && targetScore >= 0) {
-      player.score = targetScore;
-    }
-  });
-
-  // Debug command: Add score to current score
-  socket.on('debugAddScore', (scoreToAdd) => {
-    const player = players.get(socket.id);
-    if (!player || player.isDying) return;
-
-    // Validate score is a number
-    if (typeof scoreToAdd === 'number' && scoreToAdd > 0) {
-      player.score += scoreToAdd;
-
-      // Emit score update event to trigger evolution check on client
-      io.emit('foodCollected', {
-        playerId: socket.id,
-        foodId: 'debug',
-        newFood: null,
-        newScore: player.score
-      });
-    }
   });
 
   // Handle evolution selection
@@ -1373,6 +1507,19 @@ io.on('connection', (socket) => {
     if (player) {
       console.log(`Player leaving game: ${player.username} (${socket.id})`);
 
+      // Save player stats to database (for authenticated users)
+      // No death, so deaths = 0
+      savePlayerStats(player, {
+        kills: player.kills,
+        deaths: 0,
+        foodEaten: player.foodEaten,
+        premiumOrbsEaten: player.premiumOrbsEaten,
+        score: player.score,
+      });
+
+      // Save evolution progress to database (for authenticated users)
+      saveEvolutionProgress(player);
+
       // Remove player from game
       players.delete(socket.id);
 
@@ -1430,6 +1577,9 @@ io.on('connection', (socket) => {
 
         console.log(`💾 Player ${player.username} saved for reconnection (${reconnectionKey}). Entity remains in game for 60 seconds.`);
 
+        // Save evolution progress to database (for authenticated users)
+        saveEvolutionProgress(player);
+
         // DON'T remove from active players yet - keep the entity in the game
         // This allows the player to see their spike when they reconnect
         // The entity will be removed after 60 seconds if they don't reconnect
@@ -1447,6 +1597,34 @@ io.on('connection', (socket) => {
         io.emit('playerLeft', socket.id);
       }
     }
+  });
+
+  // Socket error handling
+  socket.on('error', (error) => {
+    console.error('❌ Socket error:', {
+      socketId: socket.id,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  socket.on('connect_error', (error) => {
+    console.error('❌ Socket connection error:', {
+      socketId: socket.id,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  });
+});
+
+// Socket.IO error handling
+io.engine.on('connection_error', (err) => {
+  console.error('❌ Engine.IO connection error:', {
+    code: err.code,
+    message: err.message,
+    context: err.context,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -1774,6 +1952,15 @@ function gameLoop() {
               score: player.score,
             },
             killerScore: 0,
+          });
+
+          // Save player stats to database (for authenticated users)
+          savePlayerStats(player, {
+            kills: player.kills,
+            deaths: 1,
+            foodEaten: player.foodEaten,
+            premiumOrbsEaten: player.premiumOrbsEaten,
+            score: player.score,
           });
         }
 
@@ -2453,6 +2640,15 @@ function gameLoop() {
               killerScore: killer ? killer.score : 0,
             });
 
+            // Save player stats to database (for authenticated users)
+            savePlayerStats(player1, {
+              kills: player1.kills,
+              deaths: 1,
+              foodEaten: player1.foodEaten,
+              premiumOrbsEaten: player1.premiumOrbsEaten,
+              score: deadPlayerScore,
+            });
+
             // Player will be removed after death animation completes (in game loop)
           }
 
@@ -2532,6 +2728,15 @@ function gameLoop() {
                 score: deadPlayerScore,
               },
               killerScore: killer ? killer.score : 0,
+            });
+
+            // Save player stats to database (for authenticated users)
+            savePlayerStats(player2, {
+              kills: player2.kills,
+              deaths: 1,
+              foodEaten: player2.foodEaten,
+              premiumOrbsEaten: player2.premiumOrbsEaten,
+              score: deadPlayerScore,
             });
 
             // Player will be removed after death animation completes (in game loop)
@@ -2627,15 +2832,64 @@ const gameLoopInterval = setInterval(gameLoop, 1000 / GAME_CONFIG.TICK_RATE);
 
 // Start server
 httpServer.listen(PORT, () => {
-  console.log(`Game server running on port ${PORT}`);
+  console.log('🚀 ========================================');
+  console.log(`🎮 burrs.io Game Server Started`);
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`⏱️  Tick Rate: ${GAME_CONFIG.TICK_RATE} ticks/second`);
+  console.log(`👥 Max Players: ${GAME_CONFIG.MAX_PLAYERS_PER_SERVER}`);
+  console.log(`🗺️  Map Size: ${GAME_CONFIG.MAP_WIDTH}x${GAME_CONFIG.MAP_HEIGHT}`);
+  console.log(`⏰ Started at: ${new Date().toISOString()}`);
+  console.log('🚀 ========================================');
+});
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  console.error('❌ UNCAUGHT EXCEPTION:', {
+    error: error.message,
+    stack: error.stack,
+    timestamp: new Date().toISOString(),
+  });
+  // Don't exit - log and continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ UNHANDLED PROMISE REJECTION:', {
+    reason: reason,
+    promise: promise,
+    timestamp: new Date().toISOString(),
+  });
+  // Don't exit - log and continue
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
-  console.log('\nShutting down server...');
+  console.log('\n🛑 Shutting down server gracefully...');
+  clearInterval(gameLoopInterval);
+  io.close(() => {
+    console.log('✅ Socket.IO server closed');
+  });
+  httpServer.close(() => {
+    console.log('✅ HTTP server closed');
+  });
+  mongoClient.close().then(() => {
+    console.log('✅ MongoDB connection closed');
+    process.exit(0);
+  }).catch((err) => {
+    console.error('❌ Error closing MongoDB connection:', err);
+    process.exit(1);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 SIGTERM received, shutting down gracefully...');
   clearInterval(gameLoopInterval);
   io.close();
   httpServer.close();
-  process.exit(0);
+  mongoClient.close().then(() => {
+    process.exit(0);
+  }).catch(() => {
+    process.exit(1);
+  });
 });
 
