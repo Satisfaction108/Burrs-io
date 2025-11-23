@@ -101,6 +101,9 @@ interface Player {
   isAFK?: boolean
   // Chain system properties
   segments?: SpikeSegment[]  // Array of spike segments (head is segments[0])
+  // Spawn animation properties
+  isSpawning?: boolean
+  spawnProgress?: number
 }
 
 interface TeamBase {
@@ -708,27 +711,25 @@ const drawSpikeChain = (
     return
   }
 
-  // Draw connections between segments first (behind spikes)
-  ctx.save()
-  ctx.globalAlpha = opacity
-  ctx.strokeStyle = player.color
-  ctx.lineWidth = segments[0].size * 1.5 // Connection width based on segment size
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
+  // Draw connections between segments first (behind spikes) - removed per user request
+  // Spikes look connected naturally when thorns touch
 
-  for (let i = 0; i < segments.length - 1; i++) {
-    const seg1 = segments[i]
-    const seg2 = segments[i + 1]
-
-    ctx.beginPath()
-    ctx.moveTo(seg1.x, seg1.y)
-    ctx.lineTo(seg2.x, seg2.y)
-    ctx.stroke()
-  }
-  ctx.restore()
+  // Apply spawn animation effects
+  const spawnProgress = player.isSpawning ? (player.spawnProgress || 0) : 1
+  const spawnScale = 0.3 + (spawnProgress * 0.7) // Scale from 30% to 100%
+  const spawnOpacity = opacity * spawnProgress // Fade in
 
   // Draw all segments (all share the same rotation from player.rotation)
   segments.forEach((segment, index) => {
+    ctx.save()
+
+    // Apply spawn animation scale
+    if (player.isSpawning) {
+      ctx.translate(segment.x, segment.y)
+      ctx.scale(spawnScale, spawnScale)
+      ctx.translate(-segment.x, -segment.y)
+    }
+
     // Apply spike customization effects to all segments
     drawSpikeEffects(ctx, segment.x, segment.y, segment.size, spikeEffectId)
 
@@ -757,9 +758,27 @@ const drawSpikeChain = (
       skipUsername,
       player.isAI ?? false,
       player.spikeType || 'Spike',
-      opacity
+      spawnOpacity, // Apply spawn fade-in
+      index !== 0 // Show core for all segments except head (index 0)
     )
+
+    ctx.restore()
   })
+
+  // Draw spawn animation ring effect
+  if (player.isSpawning && segments.length > 0) {
+    const headSegment = segments[0]
+    ctx.save()
+    ctx.globalAlpha = (1 - spawnProgress) * 0.6
+    ctx.strokeStyle = player.color
+    ctx.lineWidth = 3
+    ctx.shadowColor = player.color
+    ctx.shadowBlur = 15
+    ctx.beginPath()
+    ctx.arc(headSegment.x, headSegment.y, headSegment.size * (2 - spawnProgress), 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 // Draw a spike using Canvas2D
@@ -779,6 +798,7 @@ const drawSpike = (
   isAI: boolean = false,
   spikeType: SpikeType = 'Spike',
   opacity: number = 1, // Add opacity parameter for ghost mode
+  showCore: boolean = true, // Show white energy core (false for head spike in chain)
 ) => {
   ctx.save()
   ctx.translate(x, y)
@@ -985,20 +1005,22 @@ const drawSpike = (
   ctx.fill()
   ctx.restore()
 
-  // Draw small bright energy core at center only
-  ctx.save()
-  const coreTime = Date.now() / 1000
-  const corePulse = Math.sin(coreTime * 3) * 0.3 + 0.7
-  const coreSize = size * 0.2 * corePulse
+  // Draw small bright energy core at center only (skip for head spike in chain)
+  if (showCore) {
+    ctx.save()
+    const coreTime = Date.now() / 1000
+    const corePulse = Math.sin(coreTime * 3) * 0.3 + 0.7
+    const coreSize = size * 0.2 * corePulse
 
-  ctx.fillStyle = '#ffffff'
-  ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 6
-  ctx.globalAlpha = 0.9 * (deathProgress ? 1 - deathProgress : 1) * opacity
-  ctx.beginPath()
-  ctx.arc(0, 0, coreSize, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.restore()
+    ctx.fillStyle = '#ffffff'
+    ctx.shadowColor = '#ffffff'
+    ctx.shadowBlur = 6
+    ctx.globalAlpha = 0.9 * (deathProgress ? 1 - deathProgress : 1) * opacity
+    ctx.beginPath()
+    ctx.arc(0, 0, coreSize, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
 
   ctx.restore()
 
@@ -1260,8 +1282,18 @@ const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number
   const floatOffset = Math.sin(currentTime * 1.5 + pulsePhase) * 3
   const currentY = food.y + floatOffset
 
+  // Draw subtle outer glow
+  ctx.globalAlpha = opacity * 0.3
+  ctx.beginPath()
+  ctx.arc(food.x, currentY, food.size * 1.3, 0, Math.PI * 2)
+  ctx.fillStyle = food.color
+  ctx.shadowColor = food.color
+  ctx.shadowBlur = 8
+  ctx.fill()
+
   // Draw main orb (solid color, no gradient)
   ctx.globalAlpha = opacity
+  ctx.shadowBlur = 0
   ctx.beginPath()
   ctx.arc(food.x, currentY, food.size, 0, Math.PI * 2)
   ctx.fillStyle = food.color
@@ -1332,8 +1364,28 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
   ctx.translate(currentX, currentY)
   ctx.rotate(orb.rotation)
 
+  // Draw subtle outer glow
+  ctx.globalAlpha = opacity * 0.4
+  ctx.beginPath()
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI / 4) * i
+    const x = Math.cos(angle) * currentSize * 1.4
+    const y = Math.sin(angle) * currentSize * 1.4
+    if (i === 0) {
+      ctx.moveTo(x, y)
+    } else {
+      ctx.lineTo(x, y)
+    }
+  }
+  ctx.closePath()
+  ctx.fillStyle = orb.color
+  ctx.shadowColor = orb.color
+  ctx.shadowBlur = 12
+  ctx.fill()
+
   // Draw main octagon (solid color, no shine)
   ctx.globalAlpha = opacity
+  ctx.shadowBlur = 0
   ctx.beginPath()
   for (let i = 0; i < 8; i++) {
     const angle = (Math.PI / 4) * i
@@ -2990,15 +3042,17 @@ function App() {
         ctx.fill()
       }
 
-      // Shooting stars
+      // Shooting stars (top-left to bottom-right, facing bottom-right)
       for (let i = 0; i < 3; i++) {
         const shootingStarProgress = (time * 0.3 + i * 2) % 3
         if (shootingStarProgress < 1) {
+          // Start from top-left, move to bottom-right
           const startX = (i * 300 + shootingStarProgress * canvas.width * 1.5) % canvas.width
           const startY = (i * 200 + shootingStarProgress * canvas.height * 0.5) % canvas.height
-          const endX = startX - 100
-          const endY = startY + 50
+          const endX = startX + 100 // Move right (was -100, now +100)
+          const endY = startY + 50  // Move down (already correct)
 
+          // Gradient from start (head) to end (tail)
           const shootingGradient = ctx.createLinearGradient(startX, startY, endX, endY)
           shootingGradient.addColorStop(0, '#ffffff')
           shootingGradient.addColorStop(0.5, '#00ffff80')

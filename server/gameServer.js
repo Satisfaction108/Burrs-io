@@ -278,6 +278,36 @@ function updateSegments(player) {
   }
 }
 
+/**
+ * Handle segment death and chain breaking
+ * If head (index 0) dies → entire chain dies (return true to kill player)
+ * If other segment dies → remove that segment + all behind it
+ * Returns true if player should die, false otherwise
+ */
+function handleSegmentDeath(player, segmentIndex) {
+  if (!player.segments || segmentIndex >= player.segments.length) {
+    return false;
+  }
+
+  // If head segment dies, entire chain dies
+  if (segmentIndex === 0) {
+    return true; // Signal player death
+  }
+
+  // Remove this segment and all segments behind it
+  player.segments = player.segments.slice(0, segmentIndex);
+
+  // Recalculate score based on remaining segments
+  // Each segment represents 500 score
+  const newSegmentCount = player.segments.length;
+  player.score = Math.max(0, (newSegmentCount - 1) * 500);
+
+  // Update segment sizes based on new score
+  updateSegments(player);
+
+  return false; // Player survives with reduced chain
+}
+
 // Helper to get client IP address from socket
 function getClientIP(socket) {
   // Try to get IP from various sources (handles proxies, load balancers, etc.)
@@ -950,6 +980,10 @@ io.on('connection', (socket) => {
       activeSpike: activeSpike || 'spike_default', // Active spike customization
       // Chain system properties
       segments: createSegments(spawnPos.x, spawnPos.y, 0, GAME_CONFIG.PLAYER_SIZE, 10), // Initialize with 1 segment
+      // Spawn animation properties
+      isSpawning: true, // Track if player is in spawn animation
+      spawnProgress: 0, // Track spawn animation progress (0 to 1)
+      spawnAnimationDuration: 1000, // 1 second spawn animation
     };
 
     // Load saved evolution progress for authenticated users
@@ -1893,7 +1927,8 @@ function gameLoop() {
       }
     } else {
       // Human player controlled via mouse cursor
-      if (player.mouseX !== undefined && player.mouseY !== undefined) {
+      // Don't allow movement during spawn animation
+      if (!player.isSpawning && player.mouseX !== undefined && player.mouseY !== undefined) {
         // Calculate direction from player to mouse cursor
         const dx = player.mouseX - player.x;
         const dy = player.mouseY - player.y;
@@ -1982,19 +2017,18 @@ function gameLoop() {
           const dy = previousSegment.y - currentSegment.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          // Only move if distance is greater than desired spacing
-          if (distance > segmentSpacing) {
-            // Calculate how much to move (smooth interpolation)
-            const moveDistance = distance - segmentSpacing;
-            const interpolationSpeed = 0.3; // Smooth following (0.0 = no follow, 1.0 = instant)
-            const actualMoveDistance = moveDistance * interpolationSpeed;
+          // Always move toward previous segment (more snake-like)
+          if (distance > 0.1) {
+            // Calculate target position (maintain spacing from previous segment)
+            const targetDistance = Math.max(segmentSpacing, distance * 0.1); // Minimum spacing
+            const targetX = previousSegment.x - (dx / distance) * targetDistance;
+            const targetY = previousSegment.y - (dy / distance) * targetDistance;
 
-            // Move toward previous segment
-            const moveX = (dx / distance) * actualMoveDistance;
-            const moveY = (dy / distance) * actualMoveDistance;
+            // Smooth interpolation toward target position (higher = more responsive)
+            const interpolationSpeed = 0.6; // Increased from 0.3 for more snake-like movement
 
-            currentSegment.x += moveX;
-            currentSegment.y += moveY;
+            currentSegment.x += (targetX - currentSegment.x) * interpolationSpeed;
+            currentSegment.y += (targetY - currentSegment.y) * interpolationSpeed;
           }
         }
       }
@@ -2024,6 +2058,18 @@ function gameLoop() {
       player.segments.forEach(segment => {
         segment.rotation = player.rotation;
       });
+    }
+
+    // Update spawn animation
+    if (player.isSpawning) {
+      const spawnElapsed = now - player.spawnTime;
+      player.spawnProgress = Math.min(spawnElapsed / player.spawnAnimationDuration, 1);
+
+      // End spawn animation when complete
+      if (player.spawnProgress >= 1) {
+        player.isSpawning = false;
+        player.spawnProgress = 1;
+      }
     }
 
     // Update eating animation
@@ -2058,83 +2104,78 @@ function gameLoop() {
     player.x = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_WIDTH - totalSize, player.x));
     player.y = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_HEIGHT - totalSize, player.y));
 
-    // Enforce team base boundaries
+    // Enforce team base boundaries (segment-based)
     // Human players can move freely inside their own base, but touching any other
     // team's base is instantly lethal. AI hunters die on contact with any base
     // so they never camp near spawn areas.
     TEAMS.forEach((team) => {
       const base = team.base;
-      const circleOverlaps = isCircleOverlappingBase(base, player.x, player.y, totalSize);
-
-      if (!circleOverlaps) return;
-
       const isPlayerOnThisTeam = !player.isAI && player.teamId === team.id;
 
-      // Players are allowed inside their own base
-      if (isPlayerOnThisTeam) {
-        return;
-      }
+      // Check collision for each segment
+      if (player.segments && player.segments.length > 0) {
+        for (let segIndex = 0; segIndex < player.segments.length; segIndex++) {
+          const segment = player.segments[segIndex];
+          const circleOverlaps = isCircleOverlappingBase(base, segment.x, segment.y, segment.size * 1.29);
 
-      // Lethal base contact for AI and for players entering another team's base
-      if (player.isAI || (player.teamId && player.teamId !== team.id)) {
-        if (!player.isDying) {
-          const currentTime = Date.now();
-          const timeSurvived = Math.floor((currentTime - player.spawnTime) / 1000); // in seconds
+          if (!circleOverlaps) continue;
 
-          player.isDying = true;
-          player.deathStartTime = currentTime;
-          player.deathProgress = 0;
-          // Stop all movement immediately
-          player.vx = 0;
-          player.vy = 0;
-          player.targetVx = 0;
-          player.targetVy = 0;
+          // Players are allowed inside their own base
+          if (isPlayerOnThisTeam) {
+            continue;
+          }
 
-          // Environment kill: no killer, no score distribution
-          io.emit('playerDied', {
-            playerId: player.id,
-            killedBy: null,
-            assists: [],
-            stats: {
-              timeSurvived: timeSurvived,
-              kills: player.kills,
-              foodEaten: player.foodEaten,
-              premiumOrbsEaten: player.premiumOrbsEaten,
-              score: player.score,
-            },
-            killerScore: 0,
-          });
+          // Lethal base contact for AI and for players entering another team's base
+          if (player.isAI || (player.teamId && player.teamId !== team.id)) {
+            // Segment hit enemy base - handle segment death
+            const shouldDie = handleSegmentDeath(player, segIndex);
 
-          // Save player stats to database (for authenticated users)
-          savePlayerStats(player, {
-            kills: player.kills,
-            deaths: 1,
-            foodEaten: player.foodEaten,
-            premiumOrbsEaten: player.premiumOrbsEaten,
-            score: player.score,
-          });
-        }
+            if (shouldDie || segIndex === 0) {
+              // Head hit base or entire chain should die
+              if (!player.isDying) {
+                const currentTime = Date.now();
+                const timeSurvived = Math.floor((currentTime - player.spawnTime) / 1000); // in seconds
 
-        return;
-      }
+                player.isDying = true;
+                player.deathStartTime = currentTime;
+                player.deathProgress = 0;
+                // Stop all movement immediately
+                player.vx = 0;
+                player.vy = 0;
+                player.targetVx = 0;
+                player.targetVy = 0;
 
-      // Fallback: if a player without a team somehow exists, gently push them out
-      const leftDist = player.x - base.x;
-      const rightDist = base.x + base.width - player.x;
-      const topDist = player.y - base.y;
-      const bottomDist = base.y + base.height - player.y;
-      const minDist = Math.min(leftDist, rightDist, topDist, bottomDist);
+                // Environment kill: no killer, no score distribution
+                io.emit('playerDied', {
+                  playerId: player.id,
+                  killedBy: null,
+                  assists: [],
+                  stats: {
+                    timeSurvived: timeSurvived,
+                    kills: player.kills,
+                    foodEaten: player.foodEaten,
+                    premiumOrbsEaten: player.premiumOrbsEaten,
+                    score: player.score,
+                  },
+                  killerScore: 0,
+                });
 
-      if (minDist === leftDist) {
-        player.x = base.x - totalSize;
-      } else if (minDist === rightDist) {
-        player.x = base.x + base.width + totalSize;
-      } else if (minDist === topDist) {
-        player.y = base.y - totalSize;
-      } else {
-        player.y = base.y + base.height + totalSize;
-      }
-    });
+                // Save player stats to database (for authenticated users)
+                savePlayerStats(player, {
+                  kills: player.kills,
+                  deaths: 1,
+                  foodEaten: player.foodEaten,
+                  premiumOrbsEaten: player.premiumOrbsEaten,
+                  score: player.score,
+                });
+              }
+              break; // Exit segment loop after death
+            }
+            // If segment died but player survives, continue checking other segments
+          }
+        } // End segment loop
+      } // End if player.segments check
+    }); // End TEAMS.forEach
 
     // If this player was killed by base contact this tick, skip further updates
     if (player.isDying) {
@@ -2435,29 +2476,32 @@ function gameLoop() {
     }
   });
 
-  // Check player-to-player collisions
+  // Check player-to-player collisions (segment-based)
   const playerArray = Array.from(players.values());
   for (let i = 0; i < playerArray.length; i++) {
     const player1 = playerArray[i];
-    if (player1.isDying) continue;
-    const evolutionOffset1 = player1.isAI ? 0 : (player1.evolutionScoreOffset || 0);
-    const size1 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score, evolutionOffset1);
+    if (player1.isDying || !player1.segments || player1.segments.length === 0) continue;
 
     for (let j = i + 1; j < playerArray.length; j++) {
       const player2 = playerArray[j];
-      if (player2.isDying) continue;
-      const evolutionOffset2 = player2.isAI ? 0 : (player2.evolutionScoreOffset || 0);
-      const size2 = GAME_CONFIG.PLAYER_SIZE * getSizeMultiplier(player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score, evolutionOffset2);
+      if (player2.isDying || !player2.segments || player2.segments.length === 0) continue;
 
-      // Calculate distance between players
-      const dx = player2.x - player1.x;
-      const dy = player2.y - player1.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+      // Check collision between all segments of both players
+      for (let seg1Index = 0; seg1Index < player1.segments.length; seg1Index++) {
+        const segment1 = player1.segments[seg1Index];
 
-      // Check if players are colliding (using outer spike radius)
-      const collisionDistance = size1 * 1.29 + size2 * 1.29;
+        for (let seg2Index = 0; seg2Index < player2.segments.length; seg2Index++) {
+          const segment2 = player2.segments[seg2Index];
 
-      if (distance < collisionDistance) {
+          // Calculate distance between segments
+          const dx = segment2.x - segment1.x;
+          const dy = segment2.y - segment1.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Check if segments are colliding (using outer spike radius)
+          const collisionDistance = segment1.size * 1.29 + segment2.size * 1.29;
+
+          if (distance < collisionDistance) {
         // Collision detected!
         const currentTime = Date.now();
 
@@ -2664,12 +2708,18 @@ function gameLoop() {
             damageFrom1To2 = Math.round(damageFrom1To2 * 1.15);
           }
 
-          // Apply damage to both players and track damage dealt
+          // Apply damage to individual segments
           if (canDamage2 && damageFrom1To2 > 0) {
-            // Player2 receives damage based on player1's momentum
-            player2.currentHP -= damageFrom1To2;
-            player2.currentHP = Math.max(0, player2.currentHP);
-            player2.health = (player2.currentHP / player2.maxHP) * 100;
+            // Segment2 receives damage based on player1's momentum
+            segment2.health -= damageFrom1To2;
+            segment2.health = Math.max(0, segment2.health);
+
+            // Update player2's head health and overall health
+            if (seg2Index === 0) {
+              player2.currentHP = segment2.health;
+              player2.health = (player2.currentHP / player2.maxHP) * 100;
+            }
+
             player2.isAngry = true;
             player2.lastCollisionTime = currentTime;
             player2.angryProgress = 0;
@@ -2683,13 +2733,28 @@ function gameLoop() {
               player2.slowedUntil = currentTime + 3000;
               player2.slowFactor = 0.5; // 50% speed reduction
             }
+
+            // Check if segment died
+            if (segment2.health <= 0) {
+              const shouldDie = handleSegmentDeath(player2, seg2Index);
+              if (shouldDie) {
+                player2.health = 0;
+                player2.currentHP = 0;
+              }
+            }
           }
 
           if (canDamage1 && damageFrom2To1 > 0) {
-            // Player1 receives damage based on player2's momentum
-            player1.currentHP -= damageFrom2To1;
-            player1.currentHP = Math.max(0, player1.currentHP);
-            player1.health = (player1.currentHP / player1.maxHP) * 100;
+            // Segment1 receives damage based on player2's momentum
+            segment1.health -= damageFrom2To1;
+            segment1.health = Math.max(0, segment1.health);
+
+            // Update player1's head health and overall health
+            if (seg1Index === 0) {
+              player1.currentHP = segment1.health;
+              player1.health = (player1.currentHP / player1.maxHP) * 100;
+            }
+
             player1.isAngry = true;
             player1.lastCollisionTime = currentTime;
             player1.angryProgress = 0;
@@ -2702,6 +2767,15 @@ function gameLoop() {
             if (player2.executionLungeActive && player2.spikeType === 'ThornReaper') {
               player1.slowedUntil = currentTime + 3000;
               player1.slowFactor = 0.5; // 50% speed reduction
+            }
+
+            // Check if segment died
+            if (segment1.health <= 0) {
+              const shouldDie = handleSegmentDeath(player1, seg1Index);
+              if (shouldDie) {
+                player1.health = 0;
+                player1.currentHP = 0;
+              }
             }
           }
 
@@ -2899,9 +2973,11 @@ function gameLoop() {
             // Player will be removed after death animation completes (in game loop)
           }
         }
-      }
-    }
-  }
+          } // End segment2 loop
+        } // End segment1 loop
+      } // End player2 loop
+    } // End player1 loop
+  } // End collision detection
 
   // Update premium orbs - fleeing behavior and rotation
   premiumOrbs.forEach((orb) => {
