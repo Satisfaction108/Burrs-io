@@ -1950,6 +1950,14 @@ function gameLoop() {
     player.x += player.vx;
     player.y += player.vy;
 
+    // Update head segment position to match player position
+    if (player.segments && player.segments.length > 0) {
+      player.segments[0].x = player.x;
+      player.segments[0].y = player.y;
+      player.segments[0].rotation = player.rotation;
+      player.segments[0].health = player.currentHP || player.health;
+    }
+
     // BristleStrider: Trailing Surge - record damage trail positions
     if (player.abilityActive && player.spikeType === 'BristleStrider') {
       if (!player.damageTrail) {
@@ -1968,6 +1976,13 @@ function gameLoop() {
 
     // Update rotation
     player.rotation += player.rotationSpeed;
+
+    // Sync rotation to all segments (they all rotate together)
+    if (player.segments && player.segments.length > 0) {
+      player.segments.forEach(segment => {
+        segment.rotation = player.rotation;
+      });
+    }
 
     // Update eating animation
     if (player.isEating) {

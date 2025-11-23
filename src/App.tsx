@@ -736,6 +736,12 @@ const drawSpikeChain = (
     // Only show username on head (index 0)
     const showUsername = index === 0 ? player.username : undefined
 
+    // Calculate health percentage for display
+    // segment.health is the raw HP value, need to convert to percentage
+    const maxHP = player.maxHP || 10
+    const currentHP = segment.health || maxHP
+    const healthPercentage = (currentHP / maxHP) * 100
+
     drawSpike(
       ctx,
       segment.x,
@@ -745,7 +751,7 @@ const drawSpikeChain = (
       player.color,
       showUsername,
       index === 0 ? eatingProgress : 0, // Only head shows eating animation
-      segment.health || 100,
+      healthPercentage, // Convert raw HP to percentage for health bar
       index === 0 ? (player.angryProgress || 0) : 0, // Only head shows angry animation
       player.deathProgress || 0,
       skipUsername,
