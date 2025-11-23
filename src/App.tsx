@@ -1226,7 +1226,7 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
   ctx.translate(currentX, currentY)
   ctx.rotate(orb.rotation)
 
-  // Draw main octagon (solid color)
+  // Draw main octagon (solid color, no shine)
   ctx.globalAlpha = opacity
   ctx.beginPath()
   for (let i = 0; i < 8; i++) {
@@ -1241,15 +1241,6 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
   }
   ctx.closePath()
   ctx.fillStyle = orb.color
-  ctx.fill()
-
-  // Draw small bright center shine only
-  ctx.globalAlpha = opacity * (0.9 + pulse * 0.1)
-  ctx.beginPath()
-  ctx.arc(-currentSize * 0.2, -currentSize * 0.2, currentSize * 0.35, 0, Math.PI * 2)
-  ctx.fillStyle = '#ffffff'
-  ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 6
   ctx.fill()
 
   ctx.restore()
@@ -2811,7 +2802,7 @@ function App() {
       ctx.globalAlpha = fadeAlpha
 
       // ═══════════════════════════════════════════════════════════════
-      // COSMIC HOMEPAGE BACKGROUND - Animated Gradient & Particles
+      // COSMIC HOMEPAGE BACKGROUND - Enhanced Cosmic Scene
       // ═══════════════════════════════════════════════════════════════
 
       const time = Date.now() / 1000
@@ -2832,8 +2823,49 @@ function App() {
       ctx.fillStyle = gradient
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Floating cosmic particles
-      for (let i = 0; i < 60; i++) {
+      // Nebula clouds in background
+      const nebulae = [
+        { x: canvas.width * 0.2, y: canvas.height * 0.3, size: 300, color: '#ff00ff', alpha: 0.08 },
+        { x: canvas.width * 0.7, y: canvas.height * 0.6, size: 400, color: '#00ffff', alpha: 0.06 },
+        { x: canvas.width * 0.5, y: canvas.height * 0.8, size: 350, color: '#8800ff', alpha: 0.07 },
+      ]
+
+      nebulae.forEach((nebula, index) => {
+        const nebulaX = nebula.x + Math.sin(time * 0.2 + index) * 50
+        const nebulaY = nebula.y + Math.cos(time * 0.15 + index) * 50
+        const nebulaPulse = Math.sin(time + index) * 0.3 + 0.7
+
+        const nebulaGradient = ctx.createRadialGradient(
+          nebulaX, nebulaY, 0,
+          nebulaX, nebulaY, nebula.size * nebulaPulse
+        )
+        nebulaGradient.addColorStop(0, nebula.color + Math.floor(nebula.alpha * 255).toString(16).padStart(2, '0'))
+        nebulaGradient.addColorStop(0.5, nebula.color + Math.floor(nebula.alpha * 128).toString(16).padStart(2, '0'))
+        nebulaGradient.addColorStop(1, nebula.color + '00')
+
+        ctx.fillStyle = nebulaGradient
+        ctx.globalAlpha = fadeAlpha
+        ctx.beginPath()
+        ctx.arc(nebulaX, nebulaY, nebula.size * nebulaPulse, 0, Math.PI * 2)
+        ctx.fill()
+      })
+
+      // Distant stars (background layer)
+      for (let i = 0; i < 80; i++) {
+        const x = (i * 421 % canvas.width)
+        const y = (i * 631 % canvas.height)
+        const size = 0.5 + (i % 3) * 0.3
+        const twinkle = Math.sin(time * 1.5 + i * 0.7) * 0.3 + 0.5
+
+        ctx.fillStyle = '#ffffff'
+        ctx.globalAlpha = fadeAlpha * twinkle * 0.4
+        ctx.beginPath()
+        ctx.arc(x, y, size, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Floating cosmic particles (medium layer)
+      for (let i = 0; i < 120; i++) {
         const x = (i * 547 % canvas.width) + Math.sin(time * 0.5 + i) * 30
         const y = (i * 739 % canvas.height) + Math.cos(time * 0.3 + i) * 30
         const size = (i % 4) * 0.5 + 1
@@ -2851,24 +2883,88 @@ function App() {
         ctx.fill()
       }
 
-      // Pulsing energy rings
-      const ringPulse = Math.sin(time * 1.5) * 0.3 + 0.7
-      const ringRadius = 150 * ringPulse
+      // Shooting stars
+      for (let i = 0; i < 3; i++) {
+        const shootingStarProgress = (time * 0.3 + i * 2) % 3
+        if (shootingStarProgress < 1) {
+          const startX = (i * 300 + shootingStarProgress * canvas.width * 1.5) % canvas.width
+          const startY = (i * 200 + shootingStarProgress * canvas.height * 0.5) % canvas.height
+          const endX = startX - 100
+          const endY = startY + 50
 
+          const shootingGradient = ctx.createLinearGradient(startX, startY, endX, endY)
+          shootingGradient.addColorStop(0, '#ffffff')
+          shootingGradient.addColorStop(0.5, '#00ffff80')
+          shootingGradient.addColorStop(1, '#00ffff00')
+
+          ctx.strokeStyle = shootingGradient
+          ctx.lineWidth = 2
+          ctx.globalAlpha = fadeAlpha * (1 - shootingStarProgress)
+          ctx.beginPath()
+          ctx.moveTo(startX, startY)
+          ctx.lineTo(endX, endY)
+          ctx.stroke()
+        }
+      }
+
+      // Pulsing energy rings (multiple layers)
+      const ringPulse = Math.sin(time * 1.5) * 0.3 + 0.7
+      const ringPulse2 = Math.sin(time * 1.2 + 1) * 0.3 + 0.7
+
+      // Outer ring
+      ctx.globalAlpha = fadeAlpha * 0.1
+      ctx.strokeStyle = '#8800ff'
+      ctx.lineWidth = 2
+      ctx.shadowColor = '#8800ff'
+      ctx.shadowBlur = 10
+      ctx.beginPath()
+      ctx.arc(canvas.width / 2, canvas.height / 2, 250 * ringPulse2, 0, Math.PI * 2)
+      ctx.stroke()
+
+      // Middle ring
       ctx.globalAlpha = fadeAlpha * 0.15
       ctx.strokeStyle = '#00ffff'
       ctx.lineWidth = 2
       ctx.shadowColor = '#00ffff'
       ctx.shadowBlur = 10
       ctx.beginPath()
-      ctx.arc(canvas.width / 2, canvas.height / 2, ringRadius, 0, Math.PI * 2)
+      ctx.arc(canvas.width / 2, canvas.height / 2, 150 * ringPulse, 0, Math.PI * 2)
       ctx.stroke()
 
+      // Inner ring
       ctx.strokeStyle = '#ff00ff'
       ctx.shadowColor = '#ff00ff'
       ctx.beginPath()
-      ctx.arc(canvas.width / 2, canvas.height / 2, ringRadius * 1.5, 0, Math.PI * 2)
+      ctx.arc(canvas.width / 2, canvas.height / 2, 225 * ringPulse, 0, Math.PI * 2)
       ctx.stroke()
+
+      // Geometric cosmic pattern (hexagons)
+      ctx.globalAlpha = fadeAlpha * 0.08
+      ctx.strokeStyle = '#00ffff'
+      ctx.lineWidth = 1
+      const hexSize = 40
+      const hexPulse = Math.sin(time) * 0.2 + 0.8
+
+      for (let hx = 0; hx < 5; hx++) {
+        for (let hy = 0; hy < 4; hy++) {
+          const centerX = canvas.width / 2 + (hx - 2) * hexSize * 1.5 * hexPulse
+          const centerY = canvas.height / 2 + (hy - 1.5) * hexSize * 1.3 * hexPulse
+
+          ctx.beginPath()
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i
+            const x = centerX + Math.cos(angle) * hexSize * hexPulse
+            const y = centerY + Math.sin(angle) * hexSize * hexPulse
+            if (i === 0) {
+              ctx.moveTo(x, y)
+            } else {
+              ctx.lineTo(x, y)
+            }
+          }
+          ctx.closePath()
+          ctx.stroke()
+        }
+      }
 
       ctx.restore()
 
