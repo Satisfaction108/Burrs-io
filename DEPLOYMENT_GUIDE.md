@@ -3,8 +3,8 @@
 ## Current Setup
 
 ### Servers
-- **US Server:** http://34.42.22.179:5174 (Google Cloud - us-central1)
-- **EU Server:** http://130.211.106.44:5174 (Google Cloud - europe-west1)
+- **US Server:** https://burrs.io (Google Cloud - us-central1)
+- **EU Server:** https://eu.burrs.io (Google Cloud - europe-west1)
 - **Max Players per Server:** 50
 
 ### Server Status
@@ -22,7 +22,7 @@ Create/update `.env.production`:
 ```env
 # This will be ignored since we're using the server selector
 # But keep it as fallback
-VITE_SERVER_URL=http://34.42.22.179:5174
+VITE_SERVER_URL=https://burrs.io
 ```
 
 2. **Build the client:**
@@ -83,8 +83,8 @@ Find the CORS configuration (around line 18-26) and add your Render domain:
 app.use(cors({
   origin: [
     "https://burrs-io.onrender.com",  // ← Add this
-    "http://34.42.22.179:5174",
-    "http://130.211.106.44:5174",
+    "https://burrs.io",
+    "https://eu.burrs.io",
     "http://localhost:5173",
     "http://localhost:5174"
   ],
