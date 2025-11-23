@@ -1964,6 +1964,14 @@ function gameLoop() {
           // Normalize direction
           targetVx = (dx / distance) * adjustedSpeed;
           targetVy = (dy / distance) * adjustedSpeed;
+
+          // Store last direction for when cursor is within dead zone
+          player.lastDirectionX = dx / distance;
+          player.lastDirectionY = dy / distance;
+        } else if (player.lastDirectionX !== undefined && player.lastDirectionY !== undefined) {
+          // Keep moving in last direction when cursor is within dead zone
+          targetVx = player.lastDirectionX * adjustedSpeed;
+          targetVy = player.lastDirectionY * adjustedSpeed;
         }
       }
     }

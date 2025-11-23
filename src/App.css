@@ -843,6 +843,61 @@
   clip-path: inset(0 100% 0 0 round 999px);
 }
 
+/* Progress Info Containers (above chat) */
+.progress-info-container {
+  position: absolute;
+  left: 24px;
+  width: 280px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: rgba(15, 15, 30, 0.96);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.8);
+  pointer-events: auto;
+  z-index: 30;
+}
+
+.spike-name-container {
+  bottom: 420px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.progress-container {
+  bottom: 370px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.progress-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #00ffff;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.progress-item {
+  display: flex;
+  align-items: center;
+}
+
+.progress-text {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  letter-spacing: 0.3px;
+}
+
 /* In-game chat panel - flat, minimal HUD window */
 .chat-panel {
   position: absolute;

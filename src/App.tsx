@@ -5183,18 +5183,6 @@ function App() {
       const currentHealth = localPlayer ? (localPlayer.health || 100) : 100
       drawStatusBars(ctx, currentHealth, currentScore, viewportWidth, viewportHeight)
 
-      // Draw progress hints below status bars
-      if (localPlayer) {
-        drawProgressHints(
-          ctx,
-          currentScore,
-          hasEvolvedRef.current,
-          tier2EvolvedRef.current,
-          viewportWidth,
-          viewportHeight
-        )
-      }
-
       // Draw leaderboard in screen space
       drawLeaderboard(ctx, playersRef.current, localPlayerIdRef.current, viewportWidth)
 
@@ -6007,6 +5995,53 @@ function App() {
           </button>
         </>
       )}
+
+      {/* Progress Info Containers (above chat) */}
+      {gameState === 'playing' && (() => {
+        const localPlayer = playersRef.current.get(localPlayerIdRef.current || '')
+        if (!localPlayer) return null
+
+        const currentScore = localPlayer.score || 0
+        const spikeType = localPlayer.spikeType || 'Spike'
+
+        // Calculate next segment spawn
+        const nextSegmentScore = Math.ceil(currentScore / 500) * 500
+        const scoreUntilSegment = nextSegmentScore - currentScore
+
+        // Calculate evolution progress
+        let evolutionText = ''
+        if (!hasEvolvedRef.current && currentScore < EVOLUTION_THRESHOLD) {
+          const remaining = EVOLUTION_THRESHOLD - currentScore
+          evolutionText = `${remaining.toLocaleString()} score until Tier 1 Evolution`
+        } else if (hasEvolvedRef.current && !tier2EvolvedRef.current && currentScore < TIER_2_THRESHOLD) {
+          const remaining = TIER_2_THRESHOLD - currentScore
+          evolutionText = `${remaining.toLocaleString()} score until Tier 2 Evolution`
+        } else if (tier2EvolvedRef.current) {
+          evolutionText = 'Max Evolution Reached'
+        }
+
+        return (
+          <>
+            {/* Spike Name Container */}
+            <div className="progress-info-container spike-name-container">
+              <span className="progress-label">Spike Name:</span>
+              <span className="progress-value">{spikeType}</span>
+            </div>
+
+            {/* Progress Container */}
+            <div className="progress-info-container progress-container">
+              {evolutionText && (
+                <div className="progress-item">
+                  <span className="progress-text">{evolutionText}</span>
+                </div>
+              )}
+              <div className="progress-item">
+                <span className="progress-text">{scoreUntilSegment} score until Spike spawns in chain</span>
+              </div>
+            </div>
+          </>
+        )
+      })()}
 
       {gameState === 'playing' && isChatOpen && (
         <div className="chat-panel">
@@ -7005,17 +7040,26 @@ function App() {
       {showDisconnectScreen && (
         <div className="death-screen">
           <div className="death-content" style={{ textAlign: 'center' }}>
-            <h1 style={{ color: '#ff4444', marginBottom: '20px' }}>Disconnected</h1>
-            <div className="death-stats">
-              <p style={{ fontSize: '18px', marginBottom: '30px', color: '#ffffff' }}>Connection to server lost</p>
-              {deathStats && (
-                <>
-                  <p>Final Score: <span className="stat-value">{deathStats.score.toLocaleString()}</span></p>
-                  <p>Kills: <span className="stat-value">{deathStats.kills}</span></p>
-                  <p>Time Survived: <span className="stat-value">{deathStats.timeSurvived}</span></p>
-                </>
-              )}
-            </div>
+            <h1 className="death-title">Disconnected</h1>
+            <p style={{ fontSize: '18px', marginBottom: '30px', color: 'rgba(255, 255, 255, 0.8)' }}>
+              Connection to server lost
+            </p>
+            {deathStats && (
+              <div className="death-stats">
+                <div className="stat-row">
+                  <span className="stat-label">Final Score</span>
+                  <span className="stat-value score-highlight">{deathStats.score.toLocaleString()}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-label">Kills</span>
+                  <span className="stat-value">{deathStats.kills}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-label">Time Survived</span>
+                  <span className="stat-value">{deathStats.timeSurvived}</span>
+                </div>
+              </div>
+            )}
             <div className="death-buttons">
               <button
                 className="respawn-button"
