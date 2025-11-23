@@ -2153,6 +2153,9 @@ function gameLoop() {
           player.score += foodOrb.xp;
           player.foodEaten += 1; // Track food eaten
 
+          // Update segments based on new score
+          updateSegments(player);
+
           // Trigger eating animation
           player.isEating = true;
           player.eatingProgress = 0;
@@ -2182,6 +2185,9 @@ function gameLoop() {
           // Player collected premium orb
           player.score += orb.xp;
           player.premiumOrbsEaten += 1; // Track premium orbs eaten
+
+          // Update segments based on new score
+          updateSegments(player);
 
           // Trigger eating animation
           player.isEating = true;
