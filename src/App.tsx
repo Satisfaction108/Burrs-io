@@ -2783,6 +2783,7 @@ function App() {
   const animationFrameRef = useRef<number | null>(null)
   const foodRef = useRef<Food[]>([])
   const premiumOrbsRef = useRef<PremiumOrb[]>([])
+  const baseProtectorsRef = useRef<any[]>([])
   const playerScoresRef = useRef<Map<string, number>>(new Map())
   // Eating animation is now handled server-side
   const notificationsRef = useRef<Notification[]>([])
@@ -2811,6 +2812,9 @@ function App() {
 
   // Movement start state (Press P to start)
   const [hasStartedMoving, setHasStartedMoving] = useState(false)
+
+  // Movement mode state (Cursor or WASD)
+  const [movementMode, setMovementMode] = useState<'cursor' | 'wasd'>('cursor')
 
   // Fullscreen functions
   const enterFullscreen = () => {
@@ -3745,7 +3749,7 @@ function App() {
       premiumOrbsRef.current = data.premiumOrbs || []
     })
 
-    socket.on('gameState', (data: { players: Player[]; premiumOrbs: PremiumOrb[] }) => {
+    socket.on('gameState', (data: { players: Player[]; premiumOrbs: PremiumOrb[]; baseProtectors?: any[] }) => {
       // Rebuild players and scores maps from the latest server snapshot
       const newPlayers = new Map<string, Player>()
       const newScores = new Map<string, number>()
@@ -3761,6 +3765,9 @@ function App() {
       // Keep premium orbs in sync with the server so fleeing movement is smooth,
       // but we still don't stream the 2400+ food orbs each tick for performance.
       premiumOrbsRef.current = data.premiumOrbs || premiumOrbsRef.current
+
+      // Keep base protectors in sync
+      baseProtectorsRef.current = data.baseProtectors || baseProtectorsRef.current
     })
 
     socket.on('playerJoined', (player: Player) => {
@@ -4402,7 +4409,7 @@ function App() {
 
   }, [gameState, displayName])
 
-  // Send input to server (mouse position for cursor-based movement)
+  // Send input to server (supports both cursor and WASD movement)
   useEffect(() => {
     if (gameState !== 'playing' || !socketRef.current) return
 
@@ -4414,18 +4421,33 @@ function App() {
         // Send current position as target (no movement)
         socketRef.current?.emit('input', {
           mouseX: localPlayer?.x || 0,
-          mouseY: localPlayer?.y || 0
+          mouseY: localPlayer?.y || 0,
+          movementMode: movementMode
         })
         return
       }
 
-      // Send mouse position in world coordinates
-      const input = {
-        mouseX: mousePositionRef.current.x,
-        mouseY: mousePositionRef.current.y,
+      if (movementMode === 'wasd') {
+        // WASD mode: send key states
+        const input = {
+          movementMode: 'wasd' as const,
+          keys: {
+            w: keysRef.current.w,
+            a: keysRef.current.a,
+            s: keysRef.current.s,
+            d: keysRef.current.d
+          }
+        }
+        socketRef.current?.emit('input', input)
+      } else {
+        // Cursor mode: send mouse position in world coordinates
+        const input = {
+          mouseX: mousePositionRef.current.x,
+          mouseY: mousePositionRef.current.y,
+          movementMode: 'cursor' as const
+        }
+        socketRef.current?.emit('input', input)
       }
-
-      socketRef.current?.emit('input', input)
     }
 
     const inputInterval = setInterval(sendInput, 1000 / 60) // 60 times per second
@@ -4433,7 +4455,7 @@ function App() {
     return () => {
       clearInterval(inputInterval)
     }
-  }, [gameState, showEvolutionTree, hasStartedMoving])
+  }, [gameState, showEvolutionTree, hasStartedMoving, movementMode])
 
   // Rendering loop for playing state
   useEffect(() => {
@@ -4779,6 +4801,63 @@ function App() {
           ctx.restore()
         })
       }
+
+      // Draw base protectors (turrets)
+      baseProtectorsRef.current.forEach((protector) => {
+        ctx.save()
+
+        // Draw turret body (hexagon)
+        ctx.beginPath()
+        const sides = 6
+        const radius = protector.size
+        for (let i = 0; i < sides; i++) {
+          const angle = (Math.PI * 2 * i) / sides
+          const x = protector.x + radius * Math.cos(angle)
+          const y = protector.y + radius * Math.sin(angle)
+          if (i === 0) {
+            ctx.moveTo(x, y)
+          } else {
+            ctx.lineTo(x, y)
+          }
+        }
+        ctx.closePath()
+
+        // Fill with team color
+        ctx.fillStyle = protector.color
+        ctx.globalAlpha = 0.8
+        ctx.fill()
+
+        // Border
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 3
+        ctx.stroke()
+
+        // Inner glow
+        ctx.globalAlpha = 0.3
+        ctx.strokeStyle = protector.color
+        ctx.lineWidth = 6
+        ctx.stroke()
+
+        // Health bar
+        const healthBarWidth = protector.size * 2
+        const healthBarHeight = 6
+        const healthBarX = protector.x - healthBarWidth / 2
+        const healthBarY = protector.y - protector.size - 15
+
+        // Background
+        ctx.globalAlpha = 0.5
+        ctx.fillStyle = '#000000'
+        ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight)
+
+        // Health fill
+        const healthPercent = protector.health / protector.maxHealth
+        ctx.globalAlpha = 0.9
+        ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff0000'
+        ctx.fillRect(healthBarX, healthBarY, healthBarWidth * healthPercent, healthBarHeight)
+
+        ctx.restore()
+      })
 
       // Draw all food orbs (pass currentTime for optimized animations)
       foodRef.current.forEach((food) => {
@@ -6257,6 +6336,17 @@ function App() {
               <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
             </svg>
           </button>
+          <button
+            className="ingame-movement-mode-button"
+            onClick={() => {
+              audioManager.playSFX('uiClick')
+              setMovementMode(prev => prev === 'cursor' ? 'wasd' : 'cursor')
+            }}
+            aria-label={`Movement Mode: ${movementMode === 'cursor' ? 'Cursor' : 'WASD'}`}
+            title={`Switch to ${movementMode === 'cursor' ? 'WASD' : 'Cursor'} movement`}
+          >
+            {movementMode === 'cursor' ? 'Cursor' : 'WASD'}
+          </button>
         </>
       )}
 
@@ -7264,8 +7354,9 @@ function App() {
             <h3>Controls</h3>
             <div className="controls-list">
               <div className="control-row">
-                <kbd>{keybindings.moveUp.toUpperCase()} {keybindings.moveLeft.toUpperCase()} {keybindings.moveDown.toUpperCase()} {keybindings.moveRight.toUpperCase()}</kbd> Move
+                <kbd>{movementMode === 'cursor' ? 'Cursor' : `${keybindings.moveUp.toUpperCase()} ${keybindings.moveLeft.toUpperCase()} ${keybindings.moveDown.toUpperCase()} ${keybindings.moveRight.toUpperCase()}`}</kbd> Movement
               </div>
+              <div className="control-row"><kbd>P</kbd> Start Playing (on spawn)</div>
               <div className="control-row"><kbd>{keybindings.speedBoost.toUpperCase()}</kbd> Speed Boost</div>
               <div className="control-row"><kbd>{keybindings.specialAbility.toUpperCase()}</kbd> Special Ability</div>
               <div className="control-row"><kbd>{keybindings.chat === 'Enter' ? '↵ Enter' : keybindings.chat.toUpperCase()}</kbd> Chat</div>

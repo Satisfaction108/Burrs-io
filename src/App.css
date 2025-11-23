@@ -1447,6 +1447,40 @@
   background-color: rgba(10, 10, 25, 0.98);
 }
 
+/* In-Game Movement Mode Button */
+.ingame-movement-mode-button {
+  position: fixed;
+  top: 20px;
+  left: 128px; /* Position next to settings button */
+  height: 44px;
+  padding: 0 16px;
+  background-color: rgba(15, 15, 30, 0.96);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 8px;
+  color: #00ffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.ingame-movement-mode-button:hover {
+  background-color: rgba(25, 25, 40, 0.98);
+  border-color: rgba(0, 255, 255, 0.5);
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+}
+
+.ingame-movement-mode-button:active {
+  background-color: rgba(10, 10, 25, 0.98);
+  transform: scale(0.95);
+}
+
 /* Mobile Responsive */
 @media (max-width: 768px) {
   .ingame-audio-settings-button {
@@ -1471,6 +1505,14 @@
   .ingame-settings-button svg {
     width: 18px;
     height: 18px;
+  }
+
+  .ingame-movement-mode-button {
+    top: 10px;
+    left: 110px; /* Position next to settings button on mobile */
+    height: 40px;
+    padding: 0 12px;
+    font-size: 12px;
   }
 
   .audio-settings-button {

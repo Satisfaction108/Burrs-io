@@ -453,6 +453,7 @@ const TEAMS = [
       width: TEAM_BASE_SIZE,
       height: TEAM_BASE_SIZE,
     },
+    protectors: [], // Will be populated with base protector turrets
   },
   {
     id: 'BLUE',
@@ -464,6 +465,7 @@ const TEAMS = [
       width: TEAM_BASE_SIZE,
       height: TEAM_BASE_SIZE,
     },
+    protectors: [],
   },
   {
     id: 'RED',
@@ -475,6 +477,7 @@ const TEAMS = [
       width: TEAM_BASE_SIZE,
       height: TEAM_BASE_SIZE,
     },
+    protectors: [],
   },
   {
     id: 'YELLOW',
@@ -486,8 +489,80 @@ const TEAMS = [
       width: TEAM_BASE_SIZE,
       height: TEAM_BASE_SIZE,
     },
+    protectors: [],
   },
 ];
+
+// Initialize base protectors for each team (4 turrets per base, one at each corner)
+TEAMS.forEach(team => {
+  const base = team.base;
+  const protectorSize = 60;
+  const offset = 100; // Distance from corner
+
+  // Create 4 protectors at corners of base
+  team.protectors = [
+    // Top-left
+    {
+      id: `${team.id}_protector_1`,
+      x: base.x + offset,
+      y: base.y + offset,
+      size: protectorSize,
+      health: 1000,
+      maxHealth: 1000,
+      damage: 15, // Damage per shot
+      range: 600, // Detection and shooting range
+      fireRate: 1000, // 1 shot per second
+      lastShotTime: 0,
+      teamId: team.id,
+      color: team.color
+    },
+    // Top-right
+    {
+      id: `${team.id}_protector_2`,
+      x: base.x + base.width - offset,
+      y: base.y + offset,
+      size: protectorSize,
+      health: 1000,
+      maxHealth: 1000,
+      damage: 15,
+      range: 600,
+      fireRate: 1000,
+      lastShotTime: 0,
+      teamId: team.id,
+      color: team.color
+    },
+    // Bottom-left
+    {
+      id: `${team.id}_protector_3`,
+      x: base.x + offset,
+      y: base.y + base.height - offset,
+      size: protectorSize,
+      health: 1000,
+      maxHealth: 1000,
+      damage: 15,
+      range: 600,
+      fireRate: 1000,
+      lastShotTime: 0,
+      teamId: team.id,
+      color: team.color
+    },
+    // Bottom-right
+    {
+      id: `${team.id}_protector_4`,
+      x: base.x + base.width - offset,
+      y: base.y + base.height - offset,
+      size: protectorSize,
+      health: 1000,
+      maxHealth: 1000,
+      damage: 15,
+      range: 600,
+      fireRate: 1000,
+      lastShotTime: 0,
+      teamId: team.id,
+      color: team.color
+    }
+  ];
+});
 
 function getRandomTeam() {
   return TEAMS[Math.floor(Math.random() * TEAMS.length)];
@@ -1068,7 +1143,7 @@ io.on('connection', (socket) => {
     console.log(`Player joined: ${playerName} (${socket.id})`);
   });
 
-  // Handle player input (mouse position for cursor-based movement)
+  // Handle player input (supports both cursor and WASD movement)
   socket.on('input', (inputs) => {
     const player = players.get(socket.id);
     if (player && inputs) {
@@ -1077,10 +1152,40 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Store mouse target position (in world coordinates)
-      if (typeof inputs.mouseX === 'number' && typeof inputs.mouseY === 'number') {
-        player.mouseX = inputs.mouseX;
-        player.mouseY = inputs.mouseY;
+      if (inputs.movementMode === 'wasd' && inputs.keys) {
+        // WASD mode: calculate target position from key states
+        let dx = 0;
+        let dy = 0;
+
+        if (inputs.keys.w) dy -= 1;
+        if (inputs.keys.s) dy += 1;
+        if (inputs.keys.a) dx -= 1;
+        if (inputs.keys.d) dx += 1;
+
+        // Normalize diagonal movement
+        if (dx !== 0 && dy !== 0) {
+          const length = Math.sqrt(dx * dx + dy * dy);
+          dx /= length;
+          dy /= length;
+        }
+
+        // Set target position far in the direction of movement (200 pixels away)
+        if (dx !== 0 || dy !== 0) {
+          const headSegment = player.segments && player.segments.length > 0 ? player.segments[0] : player;
+          player.mouseX = headSegment.x + dx * 200;
+          player.mouseY = headSegment.y + dy * 200;
+        } else {
+          // No keys pressed, stay in place
+          const headSegment = player.segments && player.segments.length > 0 ? player.segments[0] : player;
+          player.mouseX = headSegment.x;
+          player.mouseY = headSegment.y;
+        }
+      } else {
+        // Cursor mode: store mouse target position (in world coordinates)
+        if (typeof inputs.mouseX === 'number' && typeof inputs.mouseY === 'number') {
+          player.mouseX = inputs.mouseX;
+          player.mouseY = inputs.mouseY;
+        }
       }
     }
   });
@@ -2259,83 +2364,28 @@ function gameLoop() {
     player.x = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_WIDTH - totalSize, player.x));
     player.y = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_HEIGHT - totalSize, player.y));
 
-    // Enforce team base boundaries (segment-based)
-    // Human players can move freely inside their own base, but touching any other
-    // team's base is instantly lethal. AI hunters die on contact with any base
-    // so they never camp near spawn areas.
+    // Base healing (arras.io style)
+    // Players heal in their own base
     TEAMS.forEach((team) => {
       const base = team.base;
       const isPlayerOnThisTeam = !player.isAI && player.teamId === team.id;
 
-      // Check collision for each segment
+      // Check if player is in this base
       if (player.segments && player.segments.length > 0) {
-        for (let segIndex = 0; segIndex < player.segments.length; segIndex++) {
-          const segment = player.segments[segIndex];
-          const circleOverlaps = isCircleOverlappingBase(base, segment.x, segment.y, segment.size * 1.29);
+        const headSegment = player.segments[0];
+        const isInBase = isCircleOverlappingBase(base, headSegment.x, headSegment.y, headSegment.size * 1.29);
 
-          if (!circleOverlaps) continue;
-
-          // Players are allowed inside their own base
-          if (isPlayerOnThisTeam) {
-            continue;
-          }
-
-          // Lethal base contact for AI and for players entering another team's base
-          if (player.isAI || (player.teamId && player.teamId !== team.id)) {
-            // Segment hit enemy base - handle segment death
-            const shouldDie = handleSegmentDeath(player, segIndex);
-
-            if (shouldDie || segIndex === 0) {
-              // Head hit base or entire chain should die
-              if (!player.isDying) {
-                const currentTime = Date.now();
-                const timeSurvived = Math.floor((currentTime - player.spawnTime) / 1000); // in seconds
-
-                player.isDying = true;
-                player.deathStartTime = currentTime;
-                player.deathProgress = 0;
-                // Stop all movement immediately
-                player.vx = 0;
-                player.vy = 0;
-                player.targetVx = 0;
-                player.targetVy = 0;
-
-                // Environment kill: no killer, no score distribution
-                io.emit('playerDied', {
-                  playerId: player.id,
-                  killedBy: null,
-                  assists: [],
-                  stats: {
-                    timeSurvived: timeSurvived,
-                    kills: player.kills,
-                    foodEaten: player.foodEaten,
-                    premiumOrbsEaten: player.premiumOrbsEaten,
-                    score: player.score,
-                  },
-                  killerScore: 0,
-                });
-
-                // Save player stats to database (for authenticated users)
-                savePlayerStats(player, {
-                  kills: player.kills,
-                  deaths: 1,
-                  foodEaten: player.foodEaten,
-                  premiumOrbsEaten: player.premiumOrbsEaten,
-                  score: player.score,
-                });
-              }
-              break; // Exit segment loop after death
+        if (isInBase && isPlayerOnThisTeam) {
+          // Heal all segments when in own base (5 HP per tick, ~300 HP/sec at 60 TPS)
+          for (let segIndex = 0; segIndex < player.segments.length; segIndex++) {
+            const segment = player.segments[segIndex];
+            if (segment.health < segment.maxHealth) {
+              segment.health = Math.min(segment.maxHealth, segment.health + 5);
             }
-            // If segment died but player survives, continue checking other segments
           }
-        } // End segment loop
-      } // End if player.segments check
-    }); // End TEAMS.forEach
-
-    // If this player was killed by base contact this tick, skip further updates
-    if (player.isDying) {
-      return;
-    }
+        }
+      }
+    });
 
     if (!player.isAI) {
       // Get outer radius multiplier for this spike type
@@ -3209,6 +3259,87 @@ function gameLoop() {
     } // End player2 loop
   } // End player1 loop
 
+  // Base protector shooting logic (arras.io style)
+  TEAMS.forEach((team) => {
+    team.protectors.forEach((protector) => {
+      // Find nearest enemy player within range
+      let nearestEnemy = null;
+      let nearestDistance = Infinity;
+
+      players.forEach((player) => {
+        // Skip if player is dying, on same team, or is AI
+        if (player.isDying || (!player.isAI && player.teamId === team.id) || player.isAI) return;
+
+        // Calculate distance to player's head segment
+        if (player.segments && player.segments.length > 0) {
+          const headSegment = player.segments[0];
+          const dx = headSegment.x - protector.x;
+          const dy = headSegment.y - protector.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < protector.range && distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestEnemy = player;
+          }
+        }
+      });
+
+      // Shoot at nearest enemy if found and fire rate allows
+      if (nearestEnemy && now - protector.lastShotTime >= protector.fireRate) {
+        protector.lastShotTime = now;
+
+        // Deal damage to head segment
+        if (nearestEnemy.segments && nearestEnemy.segments.length > 0) {
+          const headSegment = nearestEnemy.segments[0];
+          headSegment.health -= protector.damage;
+          headSegment.health = Math.max(0, headSegment.health);
+
+          // Update player's head health
+          nearestEnemy.currentHP = headSegment.health;
+          nearestEnemy.health = (nearestEnemy.currentHP / nearestEnemy.maxHP) * 100;
+
+          // Check if player died from protector damage
+          if (headSegment.health <= 0) {
+            const currentTime = Date.now();
+            const timeSurvived = Math.floor((currentTime - nearestEnemy.spawnTime) / 1000);
+
+            nearestEnemy.isDying = true;
+            nearestEnemy.deathStartTime = currentTime;
+            nearestEnemy.deathProgress = 0;
+            nearestEnemy.vx = 0;
+            nearestEnemy.vy = 0;
+            nearestEnemy.targetVx = 0;
+            nearestEnemy.targetVy = 0;
+
+            // Environment kill by base protector
+            io.emit('playerDied', {
+              playerId: nearestEnemy.id,
+              killedBy: null,
+              assists: [],
+              stats: {
+                timeSurvived: timeSurvived,
+                kills: nearestEnemy.kills,
+                foodEaten: nearestEnemy.foodEaten,
+                premiumOrbsEaten: nearestEnemy.premiumOrbsEaten,
+                score: nearestEnemy.score,
+              },
+              killerScore: 0,
+            });
+
+            // Save player stats
+            savePlayerStats(nearestEnemy, {
+              kills: nearestEnemy.kills,
+              deaths: 1,
+              foodEaten: nearestEnemy.foodEaten,
+              premiumOrbsEaten: nearestEnemy.premiumOrbsEaten,
+              score: nearestEnemy.score,
+            });
+          }
+        }
+      }
+    });
+  });
+
   // Update premium orbs - fleeing behavior and rotation
   premiumOrbs.forEach((orb) => {
     // Update rotation for visual effect
@@ -3288,11 +3419,18 @@ const BROADCAST_INTERVAL = Math.floor(GAME_CONFIG.TICK_RATE / GAME_CONFIG.BROADC
 // Broadcast game state to clients at reduced rate
 function broadcastGameState() {
   if (players.size > 0) {
+    // Collect all base protectors
+    const allProtectors = [];
+    TEAMS.forEach(team => {
+      allProtectors.push(...team.protectors);
+    });
+
     io.emit('gameState', {
       players: Array.from(players.values()),
       // Premium orbs are few (20), so we can safely sync them every broadcast
       // to keep fleeing movement smooth without heavy bandwidth cost.
       premiumOrbs: Array.from(premiumOrbs.values()),
+      baseProtectors: allProtectors,
     });
   }
 }
