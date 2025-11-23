@@ -2183,69 +2183,85 @@ function gameLoop() {
     }
 
     if (!player.isAI) {
-      // Check collision with food
+      // Check collision with food (segment-based)
       food.forEach((foodOrb) => {
-        const dx = foodOrb.x - player.x;
-        const dy = foodOrb.y - player.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (!player.segments || player.segments.length === 0) return;
 
-        if (distance < actualSize + foodOrb.size) {
-          // Player collected food
-          player.score += foodOrb.xp;
-          player.foodEaten += 1; // Track food eaten
+        // Check collision with any segment
+        for (let segIndex = 0; segIndex < player.segments.length; segIndex++) {
+          const segment = player.segments[segIndex];
+          const dx = foodOrb.x - segment.x;
+          const dy = foodOrb.y - segment.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
 
-          // Update segments based on new score
-          updateSegments(player);
+          if (distance < segment.size + foodOrb.size) {
+            // Player collected food
+            player.score += foodOrb.xp;
+            player.foodEaten += 1; // Track food eaten
 
-          // Trigger eating animation
-          player.isEating = true;
-          player.eatingProgress = 0;
+            // Update segments based on new score
+            updateSegments(player);
 
-          // Remove food and spawn new one
-          food.delete(foodOrb.id);
-          const newFood = generateRandomFood();
-          food.set(newFood.id, newFood);
+            // Trigger eating animation
+            player.isEating = true;
+            player.eatingProgress = 0;
 
-          // Broadcast food collection event
-          io.emit('foodCollected', {
-            playerId: player.id,
-            foodId: foodOrb.id,
-            newFood: newFood,
-            newScore: player.score
-          });
+            // Remove food and spawn new one
+            food.delete(foodOrb.id);
+            const newFood = generateRandomFood();
+            food.set(newFood.id, newFood);
+
+            // Broadcast food collection event
+            io.emit('foodCollected', {
+              playerId: player.id,
+              foodId: foodOrb.id,
+              newFood: newFood,
+              newScore: player.score
+            });
+
+            break; // Exit segment loop after collecting food
+          }
         }
       });
 
-      // Check collision with premium orbs
+      // Check collision with premium orbs (segment-based)
       premiumOrbs.forEach((orb) => {
-        const dx = orb.x - player.x;
-        const dy = orb.y - player.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (!player.segments || player.segments.length === 0) return;
 
-        if (distance < actualSize + orb.size) {
-          // Player collected premium orb
-          player.score += orb.xp;
-          player.premiumOrbsEaten += 1; // Track premium orbs eaten
+        // Check collision with any segment
+        for (let segIndex = 0; segIndex < player.segments.length; segIndex++) {
+          const segment = player.segments[segIndex];
+          const dx = orb.x - segment.x;
+          const dy = orb.y - segment.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
 
-          // Update segments based on new score
-          updateSegments(player);
+          if (distance < segment.size + orb.size) {
+            // Player collected premium orb
+            player.score += orb.xp;
+            player.premiumOrbsEaten += 1; // Track premium orbs eaten
 
-          // Trigger eating animation
-          player.isEating = true;
-          player.eatingProgress = 0;
+            // Update segments based on new score
+            updateSegments(player);
 
-          // Remove orb and spawn new one
-          premiumOrbs.delete(orb.id);
-          const newOrb = generateRandomPremiumOrb();
-          premiumOrbs.set(newOrb.id, newOrb);
+            // Trigger eating animation
+            player.isEating = true;
+            player.eatingProgress = 0;
 
-          // Broadcast premium orb collection event
-          io.emit('premiumOrbCollected', {
-            playerId: player.id,
-            orbId: orb.id,
-            newOrb: newOrb,
-            newScore: player.score
-          });
+            // Remove orb and spawn new one
+            premiumOrbs.delete(orb.id);
+            const newOrb = generateRandomPremiumOrb();
+            premiumOrbs.set(newOrb.id, newOrb);
+
+            // Broadcast premium orb collection event
+            io.emit('premiumOrbCollected', {
+              playerId: player.id,
+              orbId: orb.id,
+              newOrb: newOrb,
+              newScore: player.score
+            });
+
+            break; // Exit segment loop after collecting orb
+          }
         }
       });
     }

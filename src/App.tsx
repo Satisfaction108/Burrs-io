@@ -3049,14 +3049,14 @@ function App() {
           // Start from top-left, move to bottom-right
           const startX = (i * 300 + shootingStarProgress * canvas.width * 1.5) % canvas.width
           const startY = (i * 200 + shootingStarProgress * canvas.height * 0.5) % canvas.height
-          const endX = startX + 100 // Move right (was -100, now +100)
-          const endY = startY + 50  // Move down (already correct)
+          const endX = startX + 100 // Move right (bottom-right direction)
+          const endY = startY + 50  // Move down (bottom-right direction)
 
-          // Gradient from start (head) to end (tail)
+          // Gradient from tail (start) to head (end) - bright at the head
           const shootingGradient = ctx.createLinearGradient(startX, startY, endX, endY)
-          shootingGradient.addColorStop(0, '#ffffff')
-          shootingGradient.addColorStop(0.5, '#00ffff80')
-          shootingGradient.addColorStop(1, '#00ffff00')
+          shootingGradient.addColorStop(0, '#00ffff00') // Transparent tail
+          shootingGradient.addColorStop(0.5, '#00ffff80') // Semi-transparent middle
+          shootingGradient.addColorStop(1, '#ffffff') // Bright white head
 
           ctx.strokeStyle = shootingGradient
           ctx.lineWidth = 2
