@@ -858,14 +858,14 @@
 }
 
 .spike-name-container {
-  bottom: 420px;
+  bottom: 480px; /* Increased from 420px for desktop */
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
 .progress-container {
-  bottom: 370px;
+  bottom: 430px; /* Increased from 370px for desktop */
   display: flex;
   flex-direction: column;
   gap: 8px;

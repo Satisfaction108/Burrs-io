@@ -2800,6 +2800,10 @@ function App() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const touchCursorRef = useRef<{ x: number; y: number } | null>(null)
 
+  // Local player score state for UI updates
+  const [localPlayerScore, setLocalPlayerScore] = useState(0)
+  const [localPlayerSpikeType, setLocalPlayerSpikeType] = useState('Spike')
+
   // Fullscreen functions
   const enterFullscreen = () => {
     const elem = document.documentElement
@@ -2944,6 +2948,24 @@ function App() {
   // Ability cooldown UI state
   const [abilityOnCooldown, setAbilityOnCooldown] = useState(false)
   const abilityCooldownTimeoutRef = useRef<number | null>(null)
+
+  // Update local player score and spike type for UI at 10 FPS (every 100ms)
+  useEffect(() => {
+    if (gameState !== 'playing') return
+
+    const updateInterval = setInterval(() => {
+      const localPlayer = localPlayerIdRef.current
+        ? playersRef.current.get(localPlayerIdRef.current)
+        : null
+
+      if (localPlayer) {
+        setLocalPlayerScore(localPlayer.score || 0)
+        setLocalPlayerSpikeType(localPlayer.spikeType || 'Spike')
+      }
+    }, 100) // Update 10 times per second (much less than 60 FPS render loop)
+
+    return () => clearInterval(updateInterval)
+  }, [gameState])
 
   // Camera position for smooth interpolation
   const cameraRef = useRef({ x: 0, y: 0 })
@@ -4360,8 +4382,6 @@ function App() {
       const localPlayer = localPlayerIdRef.current
         ? playersRef.current.get(localPlayerIdRef.current)
         : null
-
-
 
       // Calculate target camera position (center on local player)
       let targetCameraX = 0
@@ -6077,11 +6097,9 @@ function App() {
 
       {/* Progress Info Containers (above chat) */}
       {gameState === 'playing' && (() => {
-        const localPlayer = playersRef.current.get(localPlayerIdRef.current || '')
-        if (!localPlayer) return null
-
-        const currentScore = localPlayer.score || 0
-        const spikeType = localPlayer.spikeType || 'Spike'
+        // Use state variables that update every frame
+        const currentScore = localPlayerScore
+        const spikeType = localPlayerSpikeType
 
         // Calculate next segment spawn
         const nextSegmentScore = Math.ceil(currentScore / 500) * 500

@@ -265,9 +265,15 @@ function updateSegments(player) {
   // Add new segments if score increased
   if (targetSegmentCount > currentSegmentCount) {
     const lastSegment = player.segments[player.segments.length - 1];
+    const headSegment = player.segments[0];
+
     for (let i = currentSegmentCount; i < targetSegmentCount; i++) {
-      // Non-head segments have 80% HP
-      const segmentHealth = Math.floor(player.maxHP * 0.8);
+      // Non-head segments have 80% of maxHP
+      const segmentMaxHealth = Math.floor(player.maxHP * 0.8);
+
+      // Calculate health based on head segment's current health percentage
+      const headHealthPercentage = headSegment.health / headSegment.maxHealth;
+      const segmentHealth = Math.max(1, Math.floor(segmentMaxHealth * headHealthPercentage));
 
       player.segments.push({
         x: lastSegment.x,
@@ -275,7 +281,7 @@ function updateSegments(player) {
         rotation: 0,
         health: segmentHealth,
         size: segmentSize,
-        maxHealth: segmentHealth, // Store max health for this segment
+        maxHealth: segmentMaxHealth, // Store max health for this segment
         // Spawn animation properties for new segments
         isSpawning: true,
         spawnProgress: 0,
