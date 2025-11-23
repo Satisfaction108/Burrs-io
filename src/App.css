@@ -858,7 +858,7 @@
 }
 
 .spike-name-container {
-  bottom: 480px; /* Increased from 420px for desktop */
+  bottom: 520px; /* Increased for more spacing from progress container */
   display: flex;
   justify-content: space-between;
   align-items: center;

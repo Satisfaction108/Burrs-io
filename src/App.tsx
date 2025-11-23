@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { io, Socket } from 'socket.io-client'
 import './App.css'
 import { audioManager } from './AudioManager'
@@ -2959,13 +2959,45 @@ function App() {
         : null
 
       if (localPlayer) {
-        setLocalPlayerScore(localPlayer.score || 0)
-        setLocalPlayerSpikeType(localPlayer.spikeType || 'Spike')
+        const newScore = localPlayer.score || 0
+        const newSpikeType = localPlayer.spikeType || 'Spike'
+
+        // Only update if values changed to avoid unnecessary re-renders
+        setLocalPlayerScore(prevScore => prevScore !== newScore ? newScore : prevScore)
+        setLocalPlayerSpikeType(prevType => prevType !== newSpikeType ? newSpikeType : prevType)
       }
     }, 100) // Update 10 times per second (much less than 60 FPS render loop)
 
     return () => clearInterval(updateInterval)
   }, [gameState])
+
+  // Calculate progress info using useMemo to ensure it updates when score changes
+  const progressInfo = useMemo(() => {
+    const currentScore = localPlayerScore
+    const spikeType = localPlayerSpikeType
+
+    // Calculate next segment spawn
+    const nextSegmentScore = Math.ceil(currentScore / 500) * 500
+    const scoreUntilSegment = nextSegmentScore - currentScore
+
+    // Calculate evolution progress
+    let evolutionText = ''
+    if (!hasEvolvedRef.current && currentScore < EVOLUTION_THRESHOLD) {
+      const remaining = EVOLUTION_THRESHOLD - currentScore
+      evolutionText = `${remaining.toLocaleString()} score until Tier 1 Evolution`
+    } else if (hasEvolvedRef.current && !tier2EvolvedRef.current && currentScore < TIER_2_THRESHOLD) {
+      const remaining = TIER_2_THRESHOLD - currentScore
+      evolutionText = `${remaining.toLocaleString()} score until Tier 2 Evolution`
+    } else if (tier2EvolvedRef.current) {
+      evolutionText = 'Max Evolution Reached'
+    }
+
+    return {
+      spikeType,
+      scoreUntilSegment,
+      evolutionText
+    }
+  }, [localPlayerScore, localPlayerSpikeType])
 
   // Camera position for smooth interpolation
   const cameraRef = useRef({ x: 0, y: 0 })
@@ -6096,49 +6128,27 @@ function App() {
       )}
 
       {/* Progress Info Containers (above chat) */}
-      {gameState === 'playing' && (() => {
-        // Use state variables that update every frame
-        const currentScore = localPlayerScore
-        const spikeType = localPlayerSpikeType
+      {gameState === 'playing' && (
+        <>
+          {/* Spike Name Container */}
+          <div className="progress-info-container spike-name-container">
+            <span className="progress-label">Spike Name:</span>
+            <span className="progress-value">{progressInfo.spikeType}</span>
+          </div>
 
-        // Calculate next segment spawn
-        const nextSegmentScore = Math.ceil(currentScore / 500) * 500
-        const scoreUntilSegment = nextSegmentScore - currentScore
-
-        // Calculate evolution progress
-        let evolutionText = ''
-        if (!hasEvolvedRef.current && currentScore < EVOLUTION_THRESHOLD) {
-          const remaining = EVOLUTION_THRESHOLD - currentScore
-          evolutionText = `${remaining.toLocaleString()} score until Tier 1 Evolution`
-        } else if (hasEvolvedRef.current && !tier2EvolvedRef.current && currentScore < TIER_2_THRESHOLD) {
-          const remaining = TIER_2_THRESHOLD - currentScore
-          evolutionText = `${remaining.toLocaleString()} score until Tier 2 Evolution`
-        } else if (tier2EvolvedRef.current) {
-          evolutionText = 'Max Evolution Reached'
-        }
-
-        return (
-          <>
-            {/* Spike Name Container */}
-            <div className="progress-info-container spike-name-container">
-              <span className="progress-label">Spike Name:</span>
-              <span className="progress-value">{spikeType}</span>
-            </div>
-
-            {/* Progress Container */}
-            <div className="progress-info-container progress-container">
-              {evolutionText && (
-                <div className="progress-item">
-                  <span className="progress-text">{evolutionText}</span>
-                </div>
-              )}
+          {/* Progress Container */}
+          <div className="progress-info-container progress-container">
+            {progressInfo.evolutionText && (
               <div className="progress-item">
-                <span className="progress-text">{scoreUntilSegment} score until Spike spawns in chain</span>
+                <span className="progress-text">{progressInfo.evolutionText}</span>
               </div>
+            )}
+            <div className="progress-item">
+              <span className="progress-text">{progressInfo.scoreUntilSegment} score until Spike spawns in chain</span>
             </div>
-          </>
-        )
-      })()}
+          </div>
+        </>
+      )}
 
       {gameState === 'playing' && isChatOpen && (
         <div className="chat-panel">
