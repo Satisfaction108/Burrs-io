@@ -3032,9 +3032,8 @@ function gameLoop() {
 
             // Player will be removed after death animation completes (in game loop)
           }
-        }
-            } // End if (canDamage1 || canDamage2)
-          } // End if (distance < collisionDistance)
+        } // End if (canDamage1 || canDamage2)
+      } // End if (distance < collisionDistance)
         } // End segment2 loop
       } // End segment1 loop
     } // End player2 loop
