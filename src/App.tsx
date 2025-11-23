@@ -842,42 +842,11 @@ const drawSpike = (
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // COSMIC SPIKE RENDERING - Holographic Energy Spikes
+  // COSMIC SPIKE RENDERING - Clean with Focused Center Shine
   // ═══════════════════════════════════════════════════════════════
 
-  // Draw holographic outer glow for spikes
+  // Draw main white spikes (no outer glow)
   ctx.save()
-  ctx.shadowColor = color
-  ctx.shadowBlur = 20
-  ctx.globalAlpha = 0.6 * (deathProgress ? 1 - deathProgress : 1) * opacity
-
-  ctx.beginPath()
-  for (let i = 0; i < spikes * 2; i++) {
-    let radius = i % 2 === 0 ? outerRadius : innerRadius
-
-    // Add irregularity for Mauler variants - more pronounced variation
-    if ((spikeType === 'Mauler' || spikeType === 'MaulerRavager' || spikeType === 'MaulerBulwark' || spikeType === 'MaulerApex') && i % 2 === 0) {
-      radius *= 0.8 + Math.sin(i * 2.3) * 0.25 // More dramatic spike length variation
-    }
-
-    const angle = (Math.PI * i) / spikes
-    const px = Math.cos(angle) * radius
-    const py = Math.sin(angle) * radius
-    if (i === 0) {
-      ctx.moveTo(px, py)
-    } else {
-      ctx.lineTo(px, py)
-    }
-  }
-  ctx.closePath()
-  ctx.fillStyle = color
-  ctx.fill()
-  ctx.restore()
-
-  // Draw main white spikes with holographic edge
-  ctx.save()
-  ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 8
 
   ctx.beginPath()
   for (let i = 0; i < spikes * 2; i++) {
@@ -902,54 +871,24 @@ const drawSpike = (
   ctx.fill()
   ctx.restore()
 
-  // Draw colored circle body with cosmic gradient
+  // Draw colored circle body (solid color, no gradient)
   ctx.save()
-
-  // Create radial gradient for cosmic energy core
-  const bodyGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, size)
-
-  // Parse color to create gradient variations
-  const r = parseInt(color.slice(1, 3), 16)
-  const g = parseInt(color.slice(3, 5), 16)
-  const b = parseInt(color.slice(5, 7), 16)
-
-  // Brighter center (energy core)
-  bodyGradient.addColorStop(0, `rgba(${Math.min(255, r + 80)}, ${Math.min(255, g + 80)}, ${Math.min(255, b + 80)}, 1)`)
-  bodyGradient.addColorStop(0.3, color)
-  bodyGradient.addColorStop(0.7, color)
-  // Darker edges
-  bodyGradient.addColorStop(1, `rgba(${Math.max(0, r - 40)}, ${Math.max(0, g - 40)}, ${Math.max(0, b - 40)}, 1)`)
-
   ctx.beginPath()
   ctx.arc(0, 0, size, 0, Math.PI * 2)
-  ctx.fillStyle = bodyGradient
+  ctx.fillStyle = color
   ctx.fill()
-
-  // Add holographic rim glow
-  ctx.shadowColor = color
-  ctx.shadowBlur = 15
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  ctx.globalAlpha = 0.5 * (deathProgress ? 1 - deathProgress : 1) * opacity
-  ctx.stroke()
-
   ctx.restore()
 
-  // Draw pulsing energy core at center
+  // Draw small bright energy core at center only
   ctx.save()
   const coreTime = Date.now() / 1000
   const corePulse = Math.sin(coreTime * 3) * 0.3 + 0.7
-  const coreSize = size * 0.25 * corePulse
+  const coreSize = size * 0.2 * corePulse
 
-  const coreGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, coreSize)
-  coreGradient.addColorStop(0, '#ffffff')
-  coreGradient.addColorStop(0.5, color)
-  coreGradient.addColorStop(1, color + '00')
-
-  ctx.fillStyle = coreGradient
+  ctx.fillStyle = '#ffffff'
   ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 12
-  ctx.globalAlpha = 0.8 * (deathProgress ? 1 - deathProgress : 1) * opacity
+  ctx.shadowBlur = 6
+  ctx.globalAlpha = 0.9 * (deathProgress ? 1 - deathProgress : 1) * opacity
   ctx.beginPath()
   ctx.arc(0, 0, coreSize, 0, Math.PI * 2)
   ctx.fill()
@@ -1199,7 +1138,7 @@ const drawSpike = (
 }
 
 // ═══════════════════════════════════════════════════════════════
-// COSMIC FOOD ORB - Miniature Stars & Energy Particles
+// COSMIC FOOD ORB - Clean with Focused Center Shine
 // ═══════════════════════════════════════════════════════════════
 const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number) => {
   ctx.save()
@@ -1207,7 +1146,7 @@ const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number
   // Calculate opacity based on absorption progress
   const opacity = food.absorbing ? 1 - (food.absorbProgress || 0) : 1
 
-  // Pulsing glow effect
+  // Pulsing effect
   const pulsePhase = (food.x + food.y) * 0.01
   const pulse = 0.7 + Math.sin(currentTime * 2 + pulsePhase) * 0.3
 
@@ -1215,65 +1154,21 @@ const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number
   const floatOffset = Math.sin(currentTime * 1.5 + pulsePhase) * 3
   const currentY = food.y + floatOffset
 
-  // Draw outer cosmic glow
-  ctx.globalAlpha = opacity * 0.3
-  const outerGlow = ctx.createRadialGradient(food.x, currentY, 0, food.x, currentY, food.size * 3)
-  outerGlow.addColorStop(0, food.color)
-  outerGlow.addColorStop(1, food.color + '00')
-  ctx.fillStyle = outerGlow
-  ctx.beginPath()
-  ctx.arc(food.x, currentY, food.size * 3, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Draw main orb with cosmic gradient
+  // Draw main orb (solid color, no gradient)
   ctx.globalAlpha = opacity
-  const orbGradient = ctx.createRadialGradient(
-    food.x - food.size * 0.3,
-    currentY - food.size * 0.3,
-    0,
-    food.x,
-    currentY,
-    food.size
-  )
-  orbGradient.addColorStop(0, '#ffffff')
-  orbGradient.addColorStop(0.4, food.color)
-  orbGradient.addColorStop(1, food.color)
-
   ctx.beginPath()
   ctx.arc(food.x, currentY, food.size, 0, Math.PI * 2)
-  ctx.fillStyle = orbGradient
-  ctx.shadowColor = food.color
-  ctx.shadowBlur = food.size * (1.5 + pulse)
+  ctx.fillStyle = food.color
   ctx.fill()
 
-  // Draw bright energy core
-  ctx.globalAlpha = opacity * (0.8 + pulse * 0.2)
+  // Draw small bright center shine only
+  ctx.globalAlpha = opacity * (0.9 + pulse * 0.1)
   ctx.beginPath()
-  ctx.arc(food.x - food.size * 0.2, currentY - food.size * 0.2, food.size * 0.4, 0, Math.PI * 2)
+  ctx.arc(food.x - food.size * 0.25, currentY - food.size * 0.25, food.size * 0.3, 0, Math.PI * 2)
   ctx.fillStyle = '#ffffff'
   ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 8
+  ctx.shadowBlur = 4
   ctx.fill()
-
-  // Draw particle emission
-  if (!food.absorbing) {
-    const particleCount = 3
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (currentTime * 2 + i * (Math.PI * 2 / particleCount)) % (Math.PI * 2)
-      const distance = food.size * 1.5 + Math.sin(currentTime * 3 + i) * food.size * 0.5
-      const px = food.x + Math.cos(angle) * distance
-      const py = currentY + Math.sin(angle) * distance
-      const particleSize = 1 + Math.sin(currentTime * 4 + i) * 0.5
-
-      ctx.globalAlpha = opacity * (0.4 + Math.sin(currentTime * 3 + i) * 0.3)
-      ctx.beginPath()
-      ctx.arc(px, py, particleSize, 0, Math.PI * 2)
-      ctx.fillStyle = food.color
-      ctx.shadowColor = food.color
-      ctx.shadowBlur = 4
-      ctx.fill()
-    }
-  }
 
   ctx.restore()
 }
@@ -1282,7 +1177,7 @@ const drawFood = (ctx: CanvasRenderingContext2D, food: Food, currentTime: number
 // Premium orb generation is now handled server-side
 
 // ═══════════════════════════════════════════════════════════════
-// COSMIC PREMIUM ORB - Rare Cosmic Artifacts with Gravitational Effects
+// COSMIC PREMIUM ORB - Clean with Focused Center Shine
 // ═══════════════════════════════════════════════════════════════
 const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentTime: number) => {
   ctx.save()
@@ -1293,7 +1188,7 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
 
   ctx.globalAlpha = opacity
 
-  // Pulsing glow effect for premium orbs
+  // Pulsing effect
   const pulsePhase = (orb.x + orb.y) * 0.01
   const pulse = 0.6 + Math.sin(currentTime * 2.5 + pulsePhase) * 0.4
 
@@ -1309,63 +1204,21 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
     ? orb.y + (orb.absorbTargetY! - orb.y) * (orb.absorbProgress || 0) * 0.15
     : orb.y + floatY
 
-  // Draw massive cosmic energy field (gravitational lensing effect)
+  // Draw orbiting particles (reduced count for performance)
   if (!orb.absorbing) {
-    ctx.globalAlpha = opacity * 0.15
-    const fieldGradient = ctx.createRadialGradient(currentX, currentY, 0, currentX, currentY, currentSize * 5)
-    fieldGradient.addColorStop(0, orb.color)
-    fieldGradient.addColorStop(0.5, orb.color + '40')
-    fieldGradient.addColorStop(1, orb.color + '00')
-    ctx.fillStyle = fieldGradient
-    ctx.beginPath()
-    ctx.arc(currentX, currentY, currentSize * 5, 0, Math.PI * 2)
-    ctx.fill()
-  }
-
-  // Draw orbiting energy particles (cosmic debris)
-  if (!orb.absorbing) {
-    const particleCount = 8
-    const orbitRadius = currentSize * 2.5
+    const particleCount = 5
+    const orbitRadius = currentSize * 1.8
 
     for (let i = 0; i < particleCount; i++) {
       const angle = (i / particleCount) * Math.PI * 2 + currentTime * 2
       const px = currentX + Math.cos(angle) * orbitRadius
       const py = currentY + Math.sin(angle) * orbitRadius
-      const particleSize = 3 + Math.sin(currentTime * 3 + i) * 1.5
+      const particleSize = 2.5 + Math.sin(currentTime * 3 + i) * 1
 
-      ctx.globalAlpha = opacity * (0.7 + 0.3 * pulse)
-      ctx.beginPath()
-      ctx.arc(px, py, particleSize, 0, Math.PI * 2)
-
-      // Gradient for particles
-      const particleGradient = ctx.createRadialGradient(px, py, 0, px, py, particleSize)
-      particleGradient.addColorStop(0, '#ffffff')
-      particleGradient.addColorStop(0.5, orb.color)
-      particleGradient.addColorStop(1, orb.color)
-      ctx.fillStyle = particleGradient
-      ctx.shadowColor = orb.color
-      ctx.shadowBlur = 8
-      ctx.fill()
-    }
-  }
-
-  // Draw inner orbiting ring
-  if (!orb.absorbing) {
-    const ringParticles = 12
-    const ringRadius = currentSize * 1.5
-
-    for (let i = 0; i < ringParticles; i++) {
-      const angle = (i / ringParticles) * Math.PI * 2 - currentTime * 3
-      const px = currentX + Math.cos(angle) * ringRadius
-      const py = currentY + Math.sin(angle) * ringRadius
-      const particleSize = 2
-
-      ctx.globalAlpha = opacity * 0.6
+      ctx.globalAlpha = opacity * (0.6 + 0.4 * pulse)
       ctx.beginPath()
       ctx.arc(px, py, particleSize, 0, Math.PI * 2)
       ctx.fillStyle = orb.color
-      ctx.shadowColor = orb.color
-      ctx.shadowBlur = 6
       ctx.fill()
     }
   }
@@ -1373,29 +1226,8 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
   ctx.translate(currentX, currentY)
   ctx.rotate(orb.rotation)
 
-  // Draw outer cosmic glow
-  ctx.globalAlpha = opacity * 0.4
-  ctx.shadowColor = orb.color
-  ctx.shadowBlur = currentSize * 3
-  ctx.beginPath()
-  for (let i = 0; i < 8; i++) {
-    const angle = (Math.PI / 4) * i
-    const x = Math.cos(angle) * currentSize * 1.3
-    const y = Math.sin(angle) * currentSize * 1.3
-    if (i === 0) {
-      ctx.moveTo(x, y)
-    } else {
-      ctx.lineTo(x, y)
-    }
-  }
-  ctx.closePath()
-  ctx.fillStyle = orb.color
-  ctx.fill()
-
-  // Draw main octagon with cosmic gradient
+  // Draw main octagon (solid color)
   ctx.globalAlpha = opacity
-  ctx.shadowBlur = currentSize * (1.5 + pulse)
-
   ctx.beginPath()
   for (let i = 0; i < 8; i++) {
     const angle = (Math.PI / 4) * i
@@ -1408,44 +1240,17 @@ const drawPremiumOrb = (ctx: CanvasRenderingContext2D, orb: PremiumOrb, currentT
     }
   }
   ctx.closePath()
-
-  // Cosmic gradient fill
-  const orbGradient = ctx.createRadialGradient(-currentSize * 0.3, -currentSize * 0.3, 0, 0, 0, currentSize)
-  orbGradient.addColorStop(0, '#ffffff')
-  orbGradient.addColorStop(0.3, orb.color)
-  orbGradient.addColorStop(1, orb.color)
-  ctx.fillStyle = orbGradient
+  ctx.fillStyle = orb.color
   ctx.fill()
 
-  // Draw bright energy core
+  // Draw small bright center shine only
   ctx.globalAlpha = opacity * (0.9 + pulse * 0.1)
   ctx.beginPath()
-  ctx.arc(-currentSize * 0.2, -currentSize * 0.2, currentSize * 0.3, 0, Math.PI * 2)
+  ctx.arc(-currentSize * 0.2, -currentSize * 0.2, currentSize * 0.35, 0, Math.PI * 2)
   ctx.fillStyle = '#ffffff'
   ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 15
+  ctx.shadowBlur = 6
   ctx.fill()
-
-  // Draw energy arcs between octagon points
-  ctx.globalAlpha = opacity * 0.3
-  ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = 1.5
-  ctx.shadowColor = orb.color
-  ctx.shadowBlur = 8
-
-  for (let i = 0; i < 8; i += 2) {
-    const angle1 = (Math.PI / 4) * i
-    const angle2 = (Math.PI / 4) * ((i + 2) % 8)
-    const x1 = Math.cos(angle1) * currentSize * 0.8
-    const y1 = Math.sin(angle1) * currentSize * 0.8
-    const x2 = Math.cos(angle2) * currentSize * 0.8
-    const y2 = Math.sin(angle2) * currentSize * 0.8
-
-    ctx.beginPath()
-    ctx.moveTo(x1, y1)
-    ctx.lineTo(x2, y2)
-    ctx.stroke()
-  }
 
   ctx.restore()
 }
@@ -2968,11 +2773,9 @@ function App() {
     }
   }, [])
 
-  // Background spike animation for menu and connecting screens
+  // Cosmic background animation for menu and connecting screens
   useEffect(() => {
     if (gameState === 'playing') {
-      // Clear background spikes when playing
-      backgroundSpikesRef.current = []
       // Cancel any existing menu animation frame
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
@@ -2983,30 +2786,6 @@ function App() {
 
     const canvas = canvasRef.current
     if (!canvas) return
-
-    // Create background spikes only if we don't have any
-    if (backgroundSpikesRef.current.length === 0) {
-      const spikes: Player[] = []
-      for (let i = 0; i < 20; i++) {
-        spikes.push({
-          id: `bg-${i}`,
-          username: '',
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          vx: (Math.random() - 0.5) * PLAYER_SPEED * 0.5,
-          vy: (Math.random() - 0.5) * PLAYER_SPEED * 0.5,
-          size: PLAYER_SIZE * (0.6 + Math.random() * 0.8),
-          rotation: Math.random() * Math.PI * 2,
-          rotationSpeed: (Math.random() - 0.5) * 0.03,
-          color: getRandomColor(),
-          score: 0,
-          health: 100,
-          isEating: false,
-          eatingProgress: 0
-        })
-      }
-      backgroundSpikesRef.current = spikes
-    }
 
     // Track fade-out animation
     let fadeAlpha = 1.0
@@ -3031,46 +2810,67 @@ function App() {
       ctx.save()
       ctx.globalAlpha = fadeAlpha
 
-      // Update and draw background spikes with glow
+      // ═══════════════════════════════════════════════════════════════
+      // COSMIC HOMEPAGE BACKGROUND - Animated Gradient & Particles
+      // ═══════════════════════════════════════════════════════════════
+
       const time = Date.now() / 1000
-      backgroundSpikesRef.current.forEach((spike, index) => {
-        // Update position
-        spike.x += spike.vx
-        spike.y += spike.vy
-        spike.rotation += spike.rotationSpeed
 
-        // Bounce off walls
-        const totalSize = spike.size + 10
-        if (spike.x - totalSize < 0 || spike.x + totalSize > canvas.width) {
-          spike.vx *= -1
-          spike.x = Math.max(totalSize, Math.min(canvas.width - totalSize, spike.x))
-        }
-        if (spike.y - totalSize < 0 || spike.y + totalSize > canvas.height) {
-          spike.vy *= -1
-          spike.y = Math.max(totalSize, Math.min(canvas.height - totalSize, spike.y))
-        }
+      // Animated cosmic gradient background
+      const gradient = ctx.createRadialGradient(
+        canvas.width / 2 + Math.sin(time * 0.3) * 200,
+        canvas.height / 2 + Math.cos(time * 0.2) * 200,
+        0,
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.max(canvas.width, canvas.height) * 0.8
+      )
+      gradient.addColorStop(0, '#1a0033') // Deep purple
+      gradient.addColorStop(0.3, '#0a0015') // Darker purple
+      gradient.addColorStop(0.6, '#050010') // Very dark purple
+      gradient.addColorStop(1, '#000005') // Almost black
+      ctx.fillStyle = gradient
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-        // Add pulsing glow effect
-        ctx.save()
-        const pulsePhase = time * 2 + index * 0.5
-        const glowIntensity = 10 + Math.sin(pulsePhase) * 5
-        ctx.shadowColor = spike.color
-        ctx.shadowBlur = glowIntensity
+      // Floating cosmic particles
+      for (let i = 0; i < 60; i++) {
+        const x = (i * 547 % canvas.width) + Math.sin(time * 0.5 + i) * 30
+        const y = (i * 739 % canvas.height) + Math.cos(time * 0.3 + i) * 30
+        const size = (i % 4) * 0.5 + 1
+        const twinkle = Math.sin(time * 2 + i) * 0.5 + 0.5
 
-        // Draw spike
-        drawSpike(ctx, spike.x, spike.y, spike.size, spike.rotation, spike.color)
-        ctx.restore()
-      })
+        const colors = ['#ff00ff', '#00ffff', '#ff0088', '#00ff88', '#ffff00']
+        const color = colors[i % colors.length]
+
+        ctx.fillStyle = color
+        ctx.globalAlpha = fadeAlpha * twinkle * 0.6
+        ctx.shadowColor = color
+        ctx.shadowBlur = 4
+        ctx.beginPath()
+        ctx.arc(x, y, size, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Pulsing energy rings
+      const ringPulse = Math.sin(time * 1.5) * 0.3 + 0.7
+      const ringRadius = 150 * ringPulse
+
+      ctx.globalAlpha = fadeAlpha * 0.15
+      ctx.strokeStyle = '#00ffff'
+      ctx.lineWidth = 2
+      ctx.shadowColor = '#00ffff'
+      ctx.shadowBlur = 10
+      ctx.beginPath()
+      ctx.arc(canvas.width / 2, canvas.height / 2, ringRadius, 0, Math.PI * 2)
+      ctx.stroke()
+
+      ctx.strokeStyle = '#ff00ff'
+      ctx.shadowColor = '#ff00ff'
+      ctx.beginPath()
+      ctx.arc(canvas.width / 2, canvas.height / 2, ringRadius * 1.5, 0, Math.PI * 2)
+      ctx.stroke()
 
       ctx.restore()
-
-      // Handle collisions
-
-      for (let i = 0; i < backgroundSpikesRef.current.length; i++) {
-        for (let j = i + 1; j < backgroundSpikesRef.current.length; j++) {
-          handleBackgroundCollision(backgroundSpikesRef.current[i], backgroundSpikesRef.current[j])
-        }
-      }
 
       animationFrameRef.current = requestAnimationFrame(animate)
     }
@@ -4156,18 +3956,16 @@ function App() {
       ctx.fillStyle = bgGradient
       ctx.fillRect(0, 0, mapConfigRef.current.width, mapConfigRef.current.height)
 
-      // Animated nebula clouds (parallax layer 1 - slowest)
+      // Animated nebula clouds (parallax layer 1 - slowest) - REDUCED COUNT
       const nebulaTime = currentTime * 0.1
       const nebulaParallaxX = cameraX * 0.1
       const nebulaParallaxY = cameraY * 0.1
 
-      // Draw multiple nebula clouds with different colors
+      // Draw fewer nebula clouds for performance
       const nebulae = [
-        { x: 2000, y: 1500, color: '#ff00ff', size: 1200, alpha: 0.08 }, // Magenta
-        { x: 5000, y: 3000, color: '#00ffff', size: 1500, alpha: 0.06 }, // Cyan
-        { x: 1000, y: 5000, color: '#ff0088', size: 1000, alpha: 0.07 }, // Hot pink
-        { x: 6000, y: 6000, color: '#8800ff', size: 1300, alpha: 0.05 }, // Purple
-        { x: 3500, y: 2000, color: '#00ff88', size: 900, alpha: 0.06 },  // Teal
+        { x: 2000, y: 1500, color: '#ff00ff', size: 1200, alpha: 0.05 }, // Magenta - reduced alpha
+        { x: 5000, y: 3000, color: '#00ffff', size: 1500, alpha: 0.04 }, // Cyan - reduced alpha
+        { x: 3500, y: 4000, color: '#8800ff', size: 1300, alpha: 0.04 }, // Purple - reduced alpha
       ]
 
       nebulae.forEach((nebula, index) => {
@@ -4196,12 +3994,12 @@ function App() {
         )
       })
 
-      // Distant stars (parallax layer 2 - slow)
+      // Distant stars (parallax layer 2 - slow) - REDUCED COUNT
       const distantStarParallaxX = cameraX * 0.2
       const distantStarParallaxY = cameraY * 0.2
 
-      // Generate consistent distant stars based on position
-      for (let i = 0; i < 150; i++) {
+      // Generate fewer distant stars for performance
+      for (let i = 0; i < 80; i++) {
         const starX = (i * 547 % mapConfigRef.current.width) - distantStarParallaxX
         const starY = (i * 739 % mapConfigRef.current.height) - distantStarParallaxY
         const starSize = (i % 3) * 0.5 + 0.5
@@ -4213,11 +4011,11 @@ function App() {
         ctx.fill()
       }
 
-      // Medium stars (parallax layer 3 - medium speed)
+      // Medium stars (parallax layer 3 - medium speed) - REDUCED COUNT & BLUR
       const mediumStarParallaxX = cameraX * 0.4
       const mediumStarParallaxY = cameraY * 0.4
 
-      for (let i = 0; i < 200; i++) {
+      for (let i = 0; i < 100; i++) {
         const starX = (i * 641 % mapConfigRef.current.width) - mediumStarParallaxX
         const starY = (i * 853 % mapConfigRef.current.height) - mediumStarParallaxY
         const starSize = (i % 4) * 0.3 + 0.8
@@ -4228,34 +4026,32 @@ function App() {
         const color = colors[i % colors.length]
 
         ctx.fillStyle = color
-        ctx.globalAlpha = twinkle * 0.6
-        ctx.shadowColor = color
-        ctx.shadowBlur = 3
+        ctx.globalAlpha = twinkle * 0.5
+        // No shadow blur for performance
         ctx.beginPath()
         ctx.arc(starX, starY, starSize, 0, Math.PI * 2)
         ctx.fill()
-        ctx.shadowBlur = 0
         ctx.globalAlpha = 1
       }
 
-      // Close stars (parallax layer 4 - fast, moves with camera)
+      // Close stars (parallax layer 4 - fast, moves with camera) - REDUCED COUNT & BLUR
       const closeStarParallaxX = cameraX * 0.7
       const closeStarParallaxY = cameraY * 0.7
 
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 50; i++) {
         const starX = (i * 751 % mapConfigRef.current.width) - closeStarParallaxX
         const starY = (i * 967 % mapConfigRef.current.height) - closeStarParallaxY
         const starSize = (i % 5) * 0.4 + 1.2
         const twinkle = Math.sin(currentTime * 4 + i * 0.3) * 0.5 + 0.5
 
-        // Bright colored stars with glow
+        // Bright colored stars with minimal glow
         const colors = ['#ff00ff', '#00ffff', '#ffff00', '#ff0088', '#00ff88']
         const color = colors[i % colors.length]
 
         ctx.fillStyle = color
-        ctx.globalAlpha = twinkle * 0.8
+        ctx.globalAlpha = twinkle * 0.7
         ctx.shadowColor = color
-        ctx.shadowBlur = 6
+        ctx.shadowBlur = 3 // Reduced from 6
         ctx.beginPath()
         ctx.arc(starX, starY, starSize, 0, Math.PI * 2)
         ctx.fill()
@@ -4263,15 +4059,15 @@ function App() {
         ctx.globalAlpha = 1
       }
 
-      // Cosmic dust particles (floating across screen)
+      // Cosmic dust particles (floating across screen) - REDUCED COUNT
       const dustParallaxX = cameraX * 0.5
       const dustParallaxY = cameraY * 0.5
 
-      for (let i = 0; i < 80; i++) {
+      for (let i = 0; i < 40; i++) {
         const dustX = (i * 883 % mapConfigRef.current.width) - dustParallaxX + Math.sin(currentTime + i) * 20
         const dustY = (i * 1021 % mapConfigRef.current.height) - dustParallaxY + Math.cos(currentTime * 0.5 + i) * 15
         const dustSize = (i % 3) * 0.5 + 0.3
-        const dustAlpha = Math.sin(currentTime * 2 + i) * 0.15 + 0.15
+        const dustAlpha = Math.sin(currentTime * 2 + i) * 0.1 + 0.1
 
         ctx.fillStyle = `rgba(150, 200, 255, ${dustAlpha})`
         ctx.beginPath()
@@ -4281,7 +4077,7 @@ function App() {
 
       ctx.restore()
 
-      // Draw cosmic energy grid (holographic overlay)
+      // Draw cosmic energy grid (holographic overlay) - OPTIMIZED
       const gridSize = 100
       const startX = Math.floor(cameraX / gridSize) * gridSize
       const startY = Math.floor(cameraY / gridSize) * gridSize
@@ -4292,27 +4088,23 @@ function App() {
       ctx.lineWidth = 0.5
 
       // Animated holographic grid lines
-      const gridPulse = Math.sin(currentTime * 2) * 0.03 + 0.05
+      const gridPulse = Math.sin(currentTime * 2) * 0.02 + 0.03
 
-      // Vertical energy lines
+      // Vertical energy lines - NO SHADOW BLUR for performance
       for (let x = startX; x <= endX; x += gridSize) {
         ctx.beginPath()
         ctx.moveTo(x, Math.max(0, cameraY))
         ctx.lineTo(x, Math.min(mapConfigRef.current.height, cameraY + viewportHeight))
         ctx.strokeStyle = `rgba(0, 255, 255, ${gridPulse})`
-        ctx.shadowColor = 'rgba(0, 255, 255, 0.3)'
-        ctx.shadowBlur = 2
         ctx.stroke()
       }
 
-      // Horizontal energy lines
+      // Horizontal energy lines - NO SHADOW BLUR for performance
       for (let y = startY; y <= endY; y += gridSize) {
         ctx.beginPath()
         ctx.moveTo(Math.max(0, cameraX), y)
         ctx.lineTo(Math.min(mapConfigRef.current.width, cameraX + viewportWidth), y)
         ctx.strokeStyle = `rgba(255, 0, 255, ${gridPulse})`
-        ctx.shadowColor = 'rgba(255, 0, 255, 0.3)'
-        ctx.shadowBlur = 2
         ctx.stroke()
       }
 
@@ -4424,76 +4216,7 @@ function App() {
       // Collision detection and food/orb management is now handled server-side
       // Client only receives updates via socket events
 
-      // ═══════════════════════════════════════════════════════════════
-      // COSMIC TRAILS - Draw movement trails for all players
-      // ═══════════════════════════════════════════════════════════════
-      playersRef.current.forEach((player) => {
-        // Calculate velocity magnitude
-        const vx = player.vx || 0
-        const vy = player.vy || 0
-        const speed = Math.sqrt(vx * vx + vy * vy)
-
-        // Only draw trails if moving fast enough
-        if (speed > 1) {
-          const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
-          const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
-          const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
-          const scaledSize = PLAYER_SIZE * sizeMultiplier
-
-          // Draw cosmic comet trail
-          ctx.save()
-
-          // Calculate trail direction (opposite of movement)
-          const angle = Math.atan2(vy, vx)
-          const trailLength = Math.min(speed * 8, scaledSize * 3)
-
-          // Draw multiple trail segments for depth
-          const segments = 5
-          for (let i = 0; i < segments; i++) {
-            const segmentProgress = i / segments
-            const segmentDistance = trailLength * segmentProgress
-            const segmentX = player.x - Math.cos(angle) * segmentDistance
-            const segmentY = player.y - Math.sin(angle) * segmentDistance
-            const segmentSize = scaledSize * (1 - segmentProgress * 0.7)
-            const segmentAlpha = (1 - segmentProgress) * 0.3
-
-            // Cosmic trail gradient
-            const trailGradient = ctx.createRadialGradient(
-              segmentX, segmentY, 0,
-              segmentX, segmentY, segmentSize
-            )
-            trailGradient.addColorStop(0, player.color + Math.floor(segmentAlpha * 255).toString(16).padStart(2, '0'))
-            trailGradient.addColorStop(0.5, player.color + Math.floor(segmentAlpha * 128).toString(16).padStart(2, '0'))
-            trailGradient.addColorStop(1, player.color + '00')
-
-            ctx.fillStyle = trailGradient
-            ctx.beginPath()
-            ctx.arc(segmentX, segmentY, segmentSize, 0, Math.PI * 2)
-            ctx.fill()
-          }
-
-          // Draw energy particles in trail
-          const particleCount = Math.floor(speed / 2)
-          for (let i = 0; i < Math.min(particleCount, 8); i++) {
-            const particleProgress = Math.random()
-            const particleDistance = trailLength * particleProgress
-            const particleX = player.x - Math.cos(angle) * particleDistance + (Math.random() - 0.5) * scaledSize * 0.5
-            const particleY = player.y - Math.sin(angle) * particleDistance + (Math.random() - 0.5) * scaledSize * 0.5
-            const particleSize = 2 + Math.random() * 2
-            const particleAlpha = (1 - particleProgress) * 0.6
-
-            ctx.globalAlpha = particleAlpha
-            ctx.fillStyle = player.color
-            ctx.shadowColor = player.color
-            ctx.shadowBlur = 6
-            ctx.beginPath()
-            ctx.arc(particleX, particleY, particleSize, 0, Math.PI * 2)
-            ctx.fill()
-          }
-
-          ctx.restore()
-        }
-      })
+      // COSMIC TRAILS REMOVED FOR PERFORMANCE
 
       // Draw all players in two passes: bodies first, then names
       // First pass: Draw all player bodies (without usernames)
