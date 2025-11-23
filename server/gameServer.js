@@ -343,12 +343,12 @@ const GAME_CONFIG = {
   MAP_WIDTH: 8000,
   MAP_HEIGHT: 8000,
   PLAYER_SIZE: 30, // Base size for spikes
-  // Base max speed in world units per tick (~240 px/s at 60 FPS for small spikes)
-  PLAYER_SPEED: 4, // Reduced from 6 for slower, more controlled movement
+  // Base max speed in world units per tick (~360 px/s at 60 FPS for small spikes)
+  PLAYER_SPEED: 6, // Increased from 4 for faster, more dynamic gameplay
   TICK_RATE: 60, // Server updates per second
   BROADCAST_RATE: 30, // Broadcast to clients 30 times per second (reduced from 60 for performance)
-  FOOD_COUNT: 2400, // Total food orbs on map (scaled for 8000x8000 map)
-  PREMIUM_ORB_COUNT: 20, // Total premium orbs on map (scaled for 8000x8000 map)
+  FOOD_COUNT: 4000, // Increased from 2400 for better orb density
+  PREMIUM_ORB_COUNT: 30, // Increased from 20 for more premium orbs
   // Momentum-based movement configuration (tuned for ~2s ramp-up, smooth direction changes)
   ACCELERATION: 0.05,  // ~0 -> max speed in ~2 seconds
   DECELERATION: 0.05,  // ~max speed -> 0 in ~2 seconds when no input

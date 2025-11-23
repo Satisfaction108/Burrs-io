@@ -1183,9 +1183,9 @@ const drawSpike = (
     ctx.restore()
   }
 
-  // Draw death particles
+  // Draw death particles (reduced for performance)
   if (deathProgress && deathProgress > 0) {
-    const particleCount = 20
+    const particleCount = 12
     for (let i = 0; i < particleCount; i++) {
       const angle = (i / particleCount) * Math.PI * 2
       const distance = deathProgress * size * 3
@@ -2207,8 +2207,8 @@ const drawEvolutionEffects = (
       ctx.arc(effect.x, effect.y, expandRadius * 0.5, 0, Math.PI * 2)
       ctx.fill()
 
-      // Radiating particles
-      const particleCount = 24
+      // Radiating particles (reduced for performance)
+      const particleCount = 16
       for (let i = 0; i < particleCount; i++) {
         const angle = (i / particleCount) * Math.PI * 2
         const particleDist = expandRadius * 0.8
@@ -3694,8 +3694,8 @@ function App() {
             color: '#00e5ff'
           })
 
-          // Enhanced particle burst effect for premium orb collection (more particles, brighter)
-          const particleCount = 16
+          // Enhanced particle burst effect for premium orb collection (reduced for performance)
+          const particleCount = 10
           const orbColor = '#dd00ff' // Premium orb neon purple/magenta
           for (let i = 0; i < particleCount; i++) {
             const angle = (i / particleCount) * Math.PI * 2
@@ -3868,8 +3868,8 @@ function App() {
           audioManager.playSFX('collision')
         }
 
-        // Create collision particles
-        const particleCount = 20
+        // Create collision particles (reduced for performance)
+        const particleCount = 12
         for (let i = 0; i < particleCount; i++) {
           const angle = (i / particleCount) * Math.PI * 2
           const speed = 2 + Math.random() * 4
@@ -3998,8 +3998,8 @@ function App() {
           duration: 800,
         })
 
-        // Create green particles for AI death
-        const particleCount = 30
+        // Create green particles for AI death (reduced for performance)
+        const particleCount = 18
         for (let i = 0; i < particleCount; i++) {
           const angle = (i / particleCount) * Math.PI * 2
           const speed = 3 + Math.random() * 5
@@ -5013,11 +5013,19 @@ function App() {
 
       // Second pass: Draw all player usernames on top
       playersRef.current.forEach((player) => {
-        // Calculate size based on player's score (from server)
-        const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
-        const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
-        const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
-        const scaledSize = PLAYER_SIZE * sizeMultiplier
+        // Use segment size if available (resets every 500 points), otherwise use continuous size
+        let scaledSize: number
+        if (player.segments && player.segments.length > 0) {
+          // Use head segment size (resets every 500 points when new segment spawns)
+          scaledSize = player.segments[0].size
+        } else {
+          // Fallback to continuous size calculation
+          const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
+          const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
+          const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
+          scaledSize = PLAYER_SIZE * sizeMultiplier
+        }
+
         const deathProgress = player.deathProgress || 0
 
         // Only draw the username badge for living/dying players (fade out on death)
