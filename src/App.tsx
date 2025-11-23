@@ -1903,6 +1903,74 @@ const drawStatusBars = (
   ctx.restore()
 }
 
+// Draw progress hints (segment spawning and evolution)
+const drawProgressHints = (
+  ctx: CanvasRenderingContext2D,
+  score: number,
+  hasEvolved: boolean,
+  tier2Evolved: boolean,
+  canvasWidth: number,
+  canvasHeight: number
+) => {
+  ctx.save()
+
+  // Position below the status bars
+  const hintY = canvasHeight - 100
+  const hintX = canvasWidth / 2
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
+
+  // Determine what hint to show
+  let hintText = ''
+  let hintColor = '#00ffff'
+  let progress = 0
+
+  if (!hasEvolved && score < EVOLUTION_THRESHOLD) {
+    // Show progress to tier 1 evolution
+    const remaining = EVOLUTION_THRESHOLD - score
+    progress = score / EVOLUTION_THRESHOLD
+    hintText = `${remaining.toLocaleString()} to Tier 1 Evolution`
+    hintColor = '#ffd700'
+  } else if (hasEvolved && !tier2Evolved && score < TIER_2_THRESHOLD) {
+    // Show progress to tier 2 evolution
+    const remaining = TIER_2_THRESHOLD - score
+    progress = (score - EVOLUTION_THRESHOLD) / (TIER_2_THRESHOLD - EVOLUTION_THRESHOLD)
+    hintText = `${remaining.toLocaleString()} to Tier 2 Evolution`
+    hintColor = '#ff00ff'
+  } else {
+    // Show progress to next segment
+    const nextSegmentScore = Math.ceil(score / 500) * 500
+    const remaining = nextSegmentScore - score
+    progress = (score % 500) / 500
+    hintText = `${remaining} to next segment`
+    hintColor = '#00ffff'
+  }
+
+  // Draw progress bar
+  const barWidth = 200
+  const barHeight = 4
+  const barX = hintX - barWidth / 2
+  const barY = hintY
+
+  // Background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'
+  ctx.fillRect(barX, barY, barWidth, barHeight)
+
+  // Progress fill
+  ctx.fillStyle = hintColor
+  ctx.fillRect(barX, barY, barWidth * progress, barHeight)
+
+  // Hint text
+  ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+  ctx.shadowBlur = 4
+  ctx.fillText(hintText, hintX, barY + barHeight + 6)
+
+  ctx.restore()
+}
+
 // Draw leaderboard
 const drawLeaderboard = (
   ctx: CanvasRenderingContext2D,
@@ -5106,6 +5174,18 @@ function App() {
       const currentScore = localPlayer ? (localPlayer.score || 0) : 0
       const currentHealth = localPlayer ? (localPlayer.health || 100) : 100
       drawStatusBars(ctx, currentHealth, currentScore, viewportWidth, viewportHeight)
+
+      // Draw progress hints below status bars
+      if (localPlayer) {
+        drawProgressHints(
+          ctx,
+          currentScore,
+          hasEvolvedRef.current,
+          tier2EvolvedRef.current,
+          viewportWidth,
+          viewportHeight
+        )
+      }
 
       // Draw leaderboard in screen space
       drawLeaderboard(ctx, playersRef.current, localPlayerIdRef.current, viewportWidth)

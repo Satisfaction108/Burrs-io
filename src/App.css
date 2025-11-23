@@ -858,6 +858,7 @@
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.9);
   overflow: hidden;
   pointer-events: auto;
+  z-index: 30; /* Above canvas (z-index: 5) and minimap */
 }
 
 .chat-header {
@@ -974,6 +975,7 @@
   letter-spacing: 1px;
   cursor: pointer;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.9);
+  z-index: 30; /* Above canvas (z-index: 5) and minimap */
 }
 
 @media (max-width: 600px) {

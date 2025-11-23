@@ -2029,9 +2029,51 @@ function gameLoop() {
 
       // Update following segments (Slither.io-style chain following)
       if (player.segments.length > 1) {
-        // Calculate spacing between segments (thorns should touch)
-        // Spacing = segment diameter (so thorns of adjacent segments touch)
-        const segmentSpacing = actualSize * 2; // Diameter of spike
+        // Calculate spacing between segments based on spike type
+        // Different spike types have different outer radii
+        let outerRadiusMultiplier = 1.29; // Default (Spike)
+
+        switch (player.spikeType) {
+          case 'Prickle':
+          case 'PrickleVanguard':
+          case 'PrickleSwarm':
+          case 'PrickleBastion':
+            outerRadiusMultiplier = 1.48; // Many short spikes
+            break;
+          case 'Thorn':
+          case 'ThornWraith':
+          case 'ThornReaper':
+          case 'ThornShadow':
+            outerRadiusMultiplier = 1.58; // Few long spikes
+            break;
+          case 'Bristle':
+          case 'BristleBlitz':
+          case 'BristleStrider':
+          case 'BristleSkirmisher':
+            outerRadiusMultiplier = 1.38; // Thin rapid spikes
+            break;
+          case 'Bulwark':
+          case 'BulwarkAegis':
+          case 'BulwarkCitadel':
+          case 'BulwarkJuggernaut':
+            outerRadiusMultiplier = 1.28; // Massive blunt spikes
+            break;
+          case 'Starflare':
+          case 'StarflarePulsar':
+          case 'StarflareHorizon':
+          case 'StarflareNova':
+            outerRadiusMultiplier = 1.42; // Star pattern
+            break;
+          case 'Mauler':
+          case 'MaulerRavager':
+          case 'MaulerBulwark':
+          case 'MaulerApex':
+            outerRadiusMultiplier = 1.52; // Jagged aggressive
+            break;
+        }
+
+        // Spacing = outer radius * 2 (so thorns of adjacent segments touch)
+        const segmentSpacing = actualSize * outerRadiusMultiplier * 2;
 
         for (let i = 1; i < player.segments.length; i++) {
           const currentSegment = player.segments[i];
@@ -2065,8 +2107,8 @@ function gameLoop() {
             // Smooth interpolation toward target position (higher = more responsive)
             // Slower interpolation for spawning segments
             // Segments further back move slightly slower for more fluid snake-like motion
-            const segmentDepthFactor = 1 - (i * 0.02); // Each segment 2% slower than previous
-            const baseInterpolationSpeed = 0.7 * segmentDepthFactor; // Increased for more fluid movement
+            const segmentDepthFactor = 1 - (i * 0.015); // Each segment 1.5% slower than previous (reduced from 2%)
+            const baseInterpolationSpeed = 0.85 * segmentDepthFactor; // Increased from 0.7 for much more fluid movement
             const interpolationSpeed = currentSegment.isSpawning
               ? baseInterpolationSpeed * 0.3 // Much slower during spawn
               : baseInterpolationSpeed;
@@ -2143,8 +2185,63 @@ function gameLoop() {
       player.health = Math.min((newHP / maxHP) * 100, 100);
     }
 
-    // Enforce map boundaries (actualSize already calculated above)
-    const totalSize = actualSize * 1.29; // body radius + thorn length (scaled)
+    // Regenerate health for all segments at the same rate
+    if (player.segments && player.segments.length > 0) {
+      const fullRegenSeconds = 120;
+      const maxHP = player.maxHP || 10;
+      const regenRate = maxHP / (GAME_CONFIG.TICK_RATE * fullRegenSeconds);
+
+      player.segments.forEach((segment, index) => {
+        const segmentMaxHealth = segment.maxHealth || (index === 0 ? maxHP : Math.floor(maxHP * 0.8));
+        if (segment.health < segmentMaxHealth) {
+          segment.health = Math.min(segment.health + regenRate, segmentMaxHealth);
+        }
+      });
+    }
+
+    // Enforce map boundaries with spike-type-specific outer radius
+    let outerRadiusMultiplier = 1.29; // Default (Spike)
+
+    switch (player.spikeType) {
+      case 'Prickle':
+      case 'PrickleVanguard':
+      case 'PrickleSwarm':
+      case 'PrickleBastion':
+        outerRadiusMultiplier = 1.48;
+        break;
+      case 'Thorn':
+      case 'ThornWraith':
+      case 'ThornReaper':
+      case 'ThornShadow':
+        outerRadiusMultiplier = 1.58;
+        break;
+      case 'Bristle':
+      case 'BristleBlitz':
+      case 'BristleStrider':
+      case 'BristleSkirmisher':
+        outerRadiusMultiplier = 1.38;
+        break;
+      case 'Bulwark':
+      case 'BulwarkAegis':
+      case 'BulwarkCitadel':
+      case 'BulwarkJuggernaut':
+        outerRadiusMultiplier = 1.28;
+        break;
+      case 'Starflare':
+      case 'StarflarePulsar':
+      case 'StarflareHorizon':
+      case 'StarflareNova':
+        outerRadiusMultiplier = 1.42;
+        break;
+      case 'Mauler':
+      case 'MaulerRavager':
+      case 'MaulerBulwark':
+      case 'MaulerApex':
+        outerRadiusMultiplier = 1.52;
+        break;
+    }
+
+    const totalSize = actualSize * outerRadiusMultiplier; // body radius + thorn length (scaled)
     player.x = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_WIDTH - totalSize, player.x));
     player.y = Math.max(totalSize, Math.min(GAME_CONFIG.MAP_HEIGHT - totalSize, player.y));
 
@@ -2325,6 +2422,18 @@ function gameLoop() {
       const hpRatio = player.currentHP / player.maxHP;
       player.maxHP = newMaxHP;
       player.currentHP = Math.max(1, Math.floor(newMaxHP * Math.max(0, Math.min(1, hpRatio))));
+
+      // Update all segment health to match new maxHP ratio
+      if (player.segments && player.segments.length > 0) {
+        player.segments.forEach((segment, index) => {
+          const oldSegmentMaxHealth = segment.maxHealth || (index === 0 ? player.maxHP : Math.floor(player.maxHP * 0.8));
+          const newSegmentMaxHealth = index === 0 ? newMaxHP : Math.floor(newMaxHP * 0.8);
+          const segmentHpRatio = segment.health / oldSegmentMaxHealth;
+
+          segment.maxHealth = newSegmentMaxHealth;
+          segment.health = Math.max(1, Math.floor(newSegmentMaxHealth * Math.max(0, Math.min(1, segmentHpRatio))));
+        });
+      }
     }
 
     // Keep health percentage in sync for UI and regen
