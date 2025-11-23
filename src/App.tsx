@@ -723,10 +723,22 @@ const drawSpikeChain = (
   segments.forEach((segment, index) => {
     ctx.save()
 
-    // Apply spawn animation scale
-    if (player.isSpawning) {
+    // Check if this individual segment is spawning
+    const segmentIsSpawning = (segment as any).isSpawning || false
+    const segmentSpawnProgress = segmentIsSpawning ? ((segment as any).spawnProgress || 0) : 1
+
+    // Calculate spawn animation for this segment
+    const segmentSpawnScale = segmentIsSpawning
+      ? 0.3 + (segmentSpawnProgress * 0.7) // Scale from 30% to 100%
+      : (player.isSpawning ? spawnScale : 1)
+    const segmentSpawnOpacity = segmentIsSpawning
+      ? opacity * segmentSpawnProgress // Fade in
+      : (player.isSpawning ? spawnOpacity : opacity)
+
+    // Apply spawn animation scale (either player spawn or segment spawn)
+    if (player.isSpawning || segmentIsSpawning) {
       ctx.translate(segment.x, segment.y)
-      ctx.scale(spawnScale, spawnScale)
+      ctx.scale(segmentSpawnScale, segmentSpawnScale)
       ctx.translate(-segment.x, -segment.y)
     }
 
@@ -758,9 +770,27 @@ const drawSpikeChain = (
       index === 0 ? skipUsername : true, // Skip username for non-head segments
       player.isAI ?? false,
       player.spikeType || 'Spike',
-      spawnOpacity, // Apply spawn fade-in
+      segmentSpawnOpacity, // Apply spawn fade-in (either player or segment)
       index !== 0 // Show core for all segments except head (index 0)
     )
+
+    // Draw particle effect for spawning segment
+    if (segmentIsSpawning && segmentSpawnProgress < 1) {
+      const particleCount = 8
+      const particleRadius = segment.size * 1.5
+
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2 + segmentSpawnProgress * Math.PI
+        const distance = particleRadius * (1 - segmentSpawnProgress)
+        const px = segment.x + Math.cos(angle) * distance
+        const py = segment.y + Math.sin(angle) * distance
+
+        ctx.beginPath()
+        ctx.arc(px, py, 2, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(0, 255, 255, ${(1 - segmentSpawnProgress) * 0.8})`
+        ctx.fill()
+      }
+    }
 
     ctx.restore()
   })
@@ -997,8 +1027,25 @@ const drawSpike = (
   ctx.fill()
   ctx.restore()
 
-  // Draw colored circle body (solid color, no gradient)
+  // Draw colored circle body with health-based glow
   ctx.save()
+
+  // Add health-based glow effect
+  const healthPercent = Math.max(0, Math.min(100, health)) / 100
+  if (healthPercent < 0.5) {
+    // Low health: red pulsing glow
+    const pulseTime = Date.now() / 200
+    const pulseFactor = Math.sin(pulseTime) * 0.5 + 0.5
+    const glowIntensity = (0.5 - healthPercent) * 2 * pulseFactor // 0 to 1
+
+    ctx.shadowColor = `rgba(255, 107, 107, ${glowIntensity * 0.8})`
+    ctx.shadowBlur = size * 0.5 * glowIntensity
+  } else if (healthPercent > 0.9) {
+    // High health: subtle cyan glow
+    ctx.shadowColor = 'rgba(78, 205, 196, 0.3)'
+    ctx.shadowBlur = size * 0.2
+  }
+
   ctx.beginPath()
   ctx.arc(0, 0, size, 0, Math.PI * 2)
   ctx.fillStyle = color

@@ -226,12 +226,16 @@ function createSegments(x, y, score, baseSize, maxHP) {
   const segments = [];
 
   for (let i = 0; i < segmentCount; i++) {
+    // Head segment (index 0) has full HP, other segments have 80% HP
+    const segmentHealth = i === 0 ? maxHP : Math.floor(maxHP * 0.8);
+
     segments.push({
       x: x,
       y: y,
       rotation: 0,
-      health: maxHP,
-      size: segmentSize
+      health: segmentHealth,
+      size: segmentSize,
+      maxHealth: segmentHealth // Store max health for this segment
     });
   }
 
@@ -262,12 +266,20 @@ function updateSegments(player) {
   if (targetSegmentCount > currentSegmentCount) {
     const lastSegment = player.segments[player.segments.length - 1];
     for (let i = currentSegmentCount; i < targetSegmentCount; i++) {
+      // Non-head segments have 80% HP
+      const segmentHealth = Math.floor(player.maxHP * 0.8);
+
       player.segments.push({
         x: lastSegment.x,
         y: lastSegment.y,
         rotation: 0,
-        health: player.maxHP,
-        size: segmentSize
+        health: segmentHealth,
+        size: segmentSize,
+        maxHealth: segmentHealth, // Store max health for this segment
+        // Spawn animation properties for new segments
+        isSpawning: true,
+        spawnProgress: 0,
+        spawnStartTime: Date.now()
       });
     }
   }
@@ -1841,6 +1853,13 @@ function gameLoop() {
     // Bigger players are slower (inverse relationship)
     // At 1x size: 100% speed, at 2x size: ~71% speed, at 3x size: ~58% speed
     let speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
+
+    // Chain length penalty: Longer chains are slightly slower
+    // 1 segment: 100%, 2 segments: 98%, 5 segments: 92%, 10 segments: 85%
+    const segmentCount = player.segments ? player.segments.length : 1;
+    const chainLengthPenalty = 1 - (Math.min(segmentCount - 1, 10) * 0.015); // Max 15% penalty at 10+ segments
+    speedMultiplier *= chainLengthPenalty;
+
     // AI hunters are slightly slower than players
     if (player.isAI) {
       speedMultiplier *= AI_CONFIG.SPEED_FACTOR || 0.85;
@@ -2018,6 +2037,17 @@ function gameLoop() {
           const currentSegment = player.segments[i];
           const previousSegment = player.segments[i - 1];
 
+          // Update segment spawn animation
+          if (currentSegment.isSpawning) {
+            const spawnDuration = 500; // 500ms spawn animation for new segments
+            const elapsed = now - currentSegment.spawnStartTime;
+            currentSegment.spawnProgress = Math.min(1, elapsed / spawnDuration);
+
+            if (currentSegment.spawnProgress >= 1) {
+              currentSegment.isSpawning = false;
+            }
+          }
+
           // Calculate direction from current segment to previous segment
           const dx = previousSegment.x - currentSegment.x;
           const dy = previousSegment.y - currentSegment.y;
@@ -2026,12 +2056,20 @@ function gameLoop() {
           // Always move toward previous segment (more snake-like)
           if (distance > 0.1) {
             // Calculate target position (maintain spacing from previous segment)
-            const targetDistance = Math.max(segmentSpacing, distance * 0.1); // Minimum spacing
+            // Slightly tighter spacing for more connected look (1.8x instead of 2x)
+            const tightSpacing = segmentSpacing * 0.9;
+            const targetDistance = Math.max(tightSpacing, distance * 0.1); // Minimum spacing
             const targetX = previousSegment.x - (dx / distance) * targetDistance;
             const targetY = previousSegment.y - (dy / distance) * targetDistance;
 
             // Smooth interpolation toward target position (higher = more responsive)
-            const interpolationSpeed = 0.6; // Increased from 0.3 for more snake-like movement
+            // Slower interpolation for spawning segments
+            // Segments further back move slightly slower for more fluid snake-like motion
+            const segmentDepthFactor = 1 - (i * 0.02); // Each segment 2% slower than previous
+            const baseInterpolationSpeed = 0.7 * segmentDepthFactor; // Increased for more fluid movement
+            const interpolationSpeed = currentSegment.isSpawning
+              ? baseInterpolationSpeed * 0.3 // Much slower during spawn
+              : baseInterpolationSpeed;
 
             currentSegment.x += (targetX - currentSegment.x) * interpolationSpeed;
             currentSegment.y += (targetY - currentSegment.y) * interpolationSpeed;
