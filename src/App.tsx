@@ -49,19 +49,28 @@ type SpikeType =
   // Tier 2 - Mauler variants
   | 'MaulerRavager' | 'MaulerBulwark' | 'MaulerApex'
 
+// Segment in a spike chain
+interface SpikeSegment {
+  x: number
+  y: number
+  rotation: number
+  health: number
+  size: number
+}
+
 interface Player {
   id: string
   username: string
-  x: number
-  y: number
+  x: number  // Head position X
+  y: number  // Head position Y
   vx: number
   vy: number
-  size: number
-  rotation: number
+  size: number  // Base size for segments
+  rotation: number  // Shared rotation for all segments
   rotationSpeed: number
   color: string
   score: number
-  health: number
+  health: number  // Head health (for backward compatibility)
   maxHP?: number
   currentHP?: number
   isEating: boolean
@@ -90,6 +99,8 @@ interface Player {
   executionLungeActive?: boolean
   // AFK properties
   isAFK?: boolean
+  // Chain system properties
+  segments?: SpikeSegment[]  // Array of spike segments (head is segments[0])
 }
 
 interface TeamBase {
@@ -654,6 +665,95 @@ const drawSpikeEffects = (
   }
 
   ctx.restore()
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHAIN RENDERING - Draw spike chain with connections
+// ═══════════════════════════════════════════════════════════════
+const drawSpikeChain = (
+  ctx: CanvasRenderingContext2D,
+  player: Player,
+  eatingProgress: number,
+  skipUsername: boolean,
+  opacity: number,
+  spikeEffectId: string
+) => {
+  const segments = player.segments || []
+
+  // If no segments, fall back to single spike rendering
+  if (segments.length === 0) {
+    const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
+    const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
+    const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
+    const scaledSize = PLAYER_SIZE * sizeMultiplier
+
+    drawSpikeEffects(ctx, player.x, player.y, scaledSize, spikeEffectId)
+    drawSpike(
+      ctx,
+      player.x,
+      player.y,
+      scaledSize,
+      player.rotation,
+      player.color,
+      player.username,
+      eatingProgress,
+      player.health || 100,
+      player.angryProgress || 0,
+      player.deathProgress || 0,
+      skipUsername,
+      player.isAI ?? false,
+      player.spikeType || 'Spike',
+      opacity
+    )
+    return
+  }
+
+  // Draw connections between segments first (behind spikes)
+  ctx.save()
+  ctx.globalAlpha = opacity
+  ctx.strokeStyle = player.color
+  ctx.lineWidth = segments[0].size * 1.5 // Connection width based on segment size
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg1 = segments[i]
+    const seg2 = segments[i + 1]
+
+    ctx.beginPath()
+    ctx.moveTo(seg1.x, seg1.y)
+    ctx.lineTo(seg2.x, seg2.y)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Draw all segments (all share the same rotation from player.rotation)
+  segments.forEach((segment, index) => {
+    // Apply spike customization effects to all segments
+    drawSpikeEffects(ctx, segment.x, segment.y, segment.size, spikeEffectId)
+
+    // Draw the spike segment
+    // Only show username on head (index 0)
+    const showUsername = index === 0 ? player.username : undefined
+
+    drawSpike(
+      ctx,
+      segment.x,
+      segment.y,
+      segment.size,
+      player.rotation, // All segments share the same rotation
+      player.color,
+      showUsername,
+      index === 0 ? eatingProgress : 0, // Only head shows eating animation
+      segment.health || 100,
+      index === 0 ? (player.angryProgress || 0) : 0, // Only head shows angry animation
+      player.deathProgress || 0,
+      skipUsername,
+      player.isAI ?? false,
+      player.spikeType || 'Spike',
+      opacity
+    )
+  })
 }
 
 // Draw a spike using Canvas2D
@@ -4325,8 +4425,7 @@ function App() {
           eatingProgress = Math.sin(player.eatingProgress * Math.PI)
         }
 
-        // Calculate size based on player's score (from server)
-        // AI hunters keep a fixed physical size so they don't snowball visually.
+        // Calculate size for ability effects (needed for some abilities)
         const baseScoreForSize = player.isAI ? 500 : (player.score || 0)
         const evolutionOffset = player.isAI ? 0 : (player.evolutionScoreOffset || 0)
         const sizeMultiplier = getSizeMultiplier(baseScoreForSize, evolutionOffset)
@@ -4336,26 +4435,17 @@ function App() {
         const ghostModeSpikes: SpikeType[] = ['Thorn', 'ThornWraith', 'ThornShade']
         const opacity = (player.abilityActive && ghostModeSpikes.includes(player.spikeType as SpikeType)) ? 0.4 : 1
 
-        // Draw spike visual effects (glow, particles, etc.)
+        // Get spike customization effect ID
         const spikeEffectId = (player as any).activeSpike || 'spike_default'
-        drawSpikeEffects(ctx, player.x, player.y, scaledSize, spikeEffectId)
 
-        drawSpike(
+        // Draw spike chain (handles both single spike and multi-segment chains)
+        drawSpikeChain(
           ctx,
-          player.x,
-          player.y,
-          scaledSize,
-          player.rotation,
-          player.color,
-          player.username,
+          player,
           eatingProgress,
-          player.health || 100, // Use server-provided health
-          player.angryProgress || 0, // Use server-provided angry progress
-          player.deathProgress || 0, // Use server-provided death progress
           true, // Skip username in first pass (draw in second pass)
-          player.isAI ?? false,
-          player.spikeType || 'Spike', // Pass spike type for visual variation
-          opacity, // Ghost mode opacity
+          opacity,
+          spikeEffectId
         )
 
         // BristleStrider: Draw damage trail

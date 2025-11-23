@@ -193,6 +193,91 @@ const disconnectedPlayers = new Map(); // IP or userId -> { player, disconnectTi
 const ipToSocketId = new Map(); // IP -> current socket.id
 const userIdToSocketId = new Map(); // userId -> current socket.id
 
+// ═══════════════════════════════════════════════════════════════
+// CHAIN SYSTEM HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Calculate number of segments based on score
+ * Every 500 score = 1 new segment
+ */
+function getSegmentCount(score) {
+  return Math.floor(score / 500) + 1; // +1 for the head
+}
+
+/**
+ * Calculate segment size based on score
+ * All segments have the same size, based on (score % 500)
+ */
+function getSegmentSize(score, baseSize) {
+  const scoreWithinCycle = score % 500;
+  // Use the same size multiplier calculation as before
+  const sizeMultiplier = 1 + (scoreWithinCycle / 500) * 0.5; // Grows from 1x to 1.5x within each 500-score cycle
+  return baseSize * sizeMultiplier;
+}
+
+/**
+ * Create segments array for a player based on their score
+ * All segments start at the same position (will spread out during movement)
+ */
+function createSegments(x, y, score, baseSize, maxHP) {
+  const segmentCount = getSegmentCount(score);
+  const segmentSize = getSegmentSize(score, baseSize);
+  const segments = [];
+
+  for (let i = 0; i < segmentCount; i++) {
+    segments.push({
+      x: x,
+      y: y,
+      rotation: 0,
+      health: maxHP,
+      size: segmentSize
+    });
+  }
+
+  return segments;
+}
+
+/**
+ * Update segments array when score changes
+ * Adds new segments or removes segments as needed
+ */
+function updateSegments(player) {
+  const targetSegmentCount = getSegmentCount(player.score);
+  const currentSegmentCount = player.segments ? player.segments.length : 0;
+  const segmentSize = getSegmentSize(player.score, GAME_CONFIG.PLAYER_SIZE);
+
+  // Initialize segments if they don't exist
+  if (!player.segments) {
+    player.segments = createSegments(player.x, player.y, player.score, GAME_CONFIG.PLAYER_SIZE, player.maxHP);
+    return;
+  }
+
+  // Update all segment sizes
+  player.segments.forEach(segment => {
+    segment.size = segmentSize;
+  });
+
+  // Add new segments if score increased
+  if (targetSegmentCount > currentSegmentCount) {
+    const lastSegment = player.segments[player.segments.length - 1];
+    for (let i = currentSegmentCount; i < targetSegmentCount; i++) {
+      player.segments.push({
+        x: lastSegment.x,
+        y: lastSegment.y,
+        rotation: 0,
+        health: player.maxHP,
+        size: segmentSize
+      });
+    }
+  }
+
+  // Remove segments if score decreased (from taking damage or dying)
+  if (targetSegmentCount < currentSegmentCount) {
+    player.segments = player.segments.slice(0, targetSegmentCount);
+  }
+}
+
 // Helper to get client IP address from socket
 function getClientIP(socket) {
   // Try to get IP from various sources (handles proxies, load balancers, etc.)
@@ -863,6 +948,8 @@ io.on('connection', (socket) => {
       // Customization properties
       activeNametag: activeNametag || 'nametag_default', // Active nametag customization
       activeSpike: activeSpike || 'spike_default', // Active spike customization
+      // Chain system properties
+      segments: createSegments(spawnPos.x, spawnPos.y, 0, GAME_CONFIG.PLAYER_SIZE, 10), // Initialize with 1 segment
     };
 
     // Load saved evolution progress for authenticated users
@@ -1475,6 +1562,8 @@ io.on('connection', (socket) => {
       afkActivationStartTime: 0,
       afkActivationX: 0,
       afkActivationY: 0,
+      // Chain system properties
+      segments: createSegments(spawnPos.x, spawnPos.y, 0, GAME_CONFIG.PLAYER_SIZE, 10), // Initialize with 1 segment
     };
 
     players.set(socket.id, player);
