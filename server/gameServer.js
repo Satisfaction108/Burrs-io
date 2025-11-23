@@ -2995,11 +2995,12 @@ function gameLoop() {
             // Player will be removed after death animation completes (in game loop)
           }
         }
-          } // End segment2 loop
-        } // End segment1 loop
-      } // End player2 loop
-    } // End player1 loop
-  } // End collision detection
+            } // End if (canDamage1 || canDamage2)
+          } // End if (distance < collisionDistance)
+        } // End segment2 loop
+      } // End segment1 loop
+    } // End player2 loop
+  } // End player1 loop
 
   // Update premium orbs - fleeing behavior and rotation
   premiumOrbs.forEach((orb) => {
