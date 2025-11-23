@@ -715,6 +715,12 @@ function createAIPlayer(index = 0) {
       right: false,
     },
     isAI: true,
+    // Chain system properties
+    segments: createSegments(spawnPos.x, spawnPos.y, baseScore, GAME_CONFIG.PLAYER_SIZE, maxHP),
+    // Spawn animation properties
+    isSpawning: true,
+    spawnProgress: 0,
+    spawnAnimationDuration: 1000,
   };
 }
 
@@ -2518,86 +2524,86 @@ function gameLoop() {
           const collisionDistance = segment1.size * 1.29 + segment2.size * 1.29;
 
           if (distance < collisionDistance) {
-        // Collision detected!
-        const currentTime = Date.now();
+            // Collision detected!
+            const currentTime = Date.now();
 
-        // Check for Ghost Mode ability (Thorn and variants) - pass through spikes
-        const ghostModeSpikes = ['Thorn', 'ThornWraith', 'ThornShade'];
-        const player1GhostMode = player1.abilityActive && ghostModeSpikes.includes(player1.spikeType);
-        const player2GhostMode = player2.abilityActive && ghostModeSpikes.includes(player2.spikeType);
+            // Check for Ghost Mode ability (Thorn and variants) - pass through spikes
+            const ghostModeSpikes = ['Thorn', 'ThornWraith', 'ThornShade'];
+            const player1GhostMode = player1.abilityActive && ghostModeSpikes.includes(player1.spikeType);
+            const player2GhostMode = player2.abilityActive && ghostModeSpikes.includes(player2.spikeType);
 
-        // If either player has ghost mode, skip collision entirely
-        if (player1GhostMode || player2GhostMode) {
-          continue;
-        }
+            // If either player has ghost mode, skip collision entirely
+            if (player1GhostMode || player2GhostMode) {
+              continue;
+            }
 
-        // Apply bounce/push-back effect
-        // Calculate normalized direction vector from player1 to player2
-        let nx = dx;
-        let ny = dy;
-        if (distance !== 0) {
-          nx = dx / distance;
-          ny = dy / distance;
-        } else {
-          // If players are exactly on top of each other, push in a default direction
-          nx = 1;
-          ny = 0;
-        }
+            // Apply bounce/push-back effect
+            // Calculate normalized direction vector from player1 to player2
+            let nx = dx;
+            let ny = dy;
+            if (distance !== 0) {
+              nx = dx / distance;
+              ny = dy / distance;
+            } else {
+              // If players are exactly on top of each other, push in a default direction
+              nx = 1;
+              ny = 0;
+            }
 
-        // Resolve overlap and apply smooth knockback instead of instant teleport
-        const overlap = collisionDistance - distance;
+            // Resolve overlap and apply smooth knockback instead of instant teleport
+            const overlap = collisionDistance - distance;
 
-        // Minimal positional separation: just enough to stop intersecting
-        const separation = overlap + 2; // small padding
-        const separationPerPlayer = separation * 0.5;
-        player1.x -= nx * separationPerPlayer;
-        player1.y -= ny * separationPerPlayer;
-        player2.x += nx * separationPerPlayer;
-        player2.y += ny * separationPerPlayer;
+            // Minimal positional separation: just enough to stop intersecting
+            const separation = overlap + 2; // small padding
+            const separationPerPlayer = separation * 0.5;
+            player1.x -= nx * separationPerPlayer;
+            player1.y -= ny * separationPerPlayer;
+            player2.x += nx * separationPerPlayer;
+            player2.y += ny * separationPerPlayer;
 
-        // Velocity-based knockback – creates a smooth push over a few frames
-        let baseImpulse = 4; // tuned for noticeable push at current speeds
+            // Velocity-based knockback – creates a smooth push over a few frames
+            let baseImpulse = 4; // tuned for noticeable push at current speeds
 
-        // Mauler: Fortress ability - 3x knockback
-        if (player1.abilityActive && player1.spikeType === 'Mauler') {
-          baseImpulse *= 3;
-        }
-        if (player2.abilityActive && player2.spikeType === 'Mauler') {
-          baseImpulse *= 3;
-        }
+            // Mauler: Fortress ability - 3x knockback
+            if (player1.abilityActive && player1.spikeType === 'Mauler') {
+              baseImpulse *= 3;
+            }
+            if (player2.abilityActive && player2.spikeType === 'Mauler') {
+              baseImpulse *= 3;
+            }
 
-        // MaulerBulwark: Fortified Fortress - 3x knockback
-        if (player1.abilityActive && player1.spikeType === 'MaulerBulwark') {
-          baseImpulse *= 3;
-        }
-        if (player2.abilityActive && player2.spikeType === 'MaulerBulwark') {
-          baseImpulse *= 3;
-        }
+            // MaulerBulwark: Fortified Fortress - 3x knockback
+            if (player1.abilityActive && player1.spikeType === 'MaulerBulwark') {
+              baseImpulse *= 3;
+            }
+            if (player2.abilityActive && player2.spikeType === 'MaulerBulwark') {
+              baseImpulse *= 3;
+            }
 
-        // BulwarkCitadel: Bastion Field - knockback enemies
-        if (player1.abilityActive && player1.spikeType === 'BulwarkCitadel') {
-          baseImpulse *= 2;
-        }
-        if (player2.abilityActive && player2.spikeType === 'BulwarkCitadel') {
-          baseImpulse *= 2;
-        }
+            // BulwarkCitadel: Bastion Field - knockback enemies
+            if (player1.abilityActive && player1.spikeType === 'BulwarkCitadel') {
+              baseImpulse *= 2;
+            }
+            if (player2.abilityActive && player2.spikeType === 'BulwarkCitadel') {
+              baseImpulse *= 2;
+            }
 
-        const depthFactor = Math.min(overlap / (GAME_CONFIG.PLAYER_SIZE * 0.8), 2); // 0..2
-        const impulseStrength = baseImpulse * (1 + 0.5 * depthFactor);
+            const depthFactor = Math.min(overlap / (GAME_CONFIG.PLAYER_SIZE * 0.8), 2); // 0..2
+            const impulseStrength = baseImpulse * (1 + 0.5 * depthFactor);
 
-        player1.vx -= nx * impulseStrength;
-        player1.vy -= ny * impulseStrength;
-        player2.vx += nx * impulseStrength;
-        player2.vy += ny * impulseStrength;
+            player1.vx -= nx * impulseStrength;
+            player1.vy -= ny * impulseStrength;
+            player2.vx += nx * impulseStrength;
+            player2.vy += ny * impulseStrength;
 
-        // Only apply damage if enough time has passed since last collision (cooldown: 0.5s)
-        // AI entities never damage each other
-        const bothAI = Boolean(player1.isAI && player2.isAI);
-        const sameTeam = Boolean(player1.teamId && player1.teamId === player2.teamId);
-        const canDamage1 = !bothAI && !sameTeam && (currentTime - player1.lastCollisionTime) > 500;
-        const canDamage2 = !bothAI && !sameTeam && (currentTime - player2.lastCollisionTime) > 500;
+            // Only apply damage if enough time has passed since last collision (cooldown: 0.5s)
+            // AI entities never damage each other
+            const bothAI = Boolean(player1.isAI && player2.isAI);
+            const sameTeam = Boolean(player1.teamId && player1.teamId === player2.teamId);
+            const canDamage1 = !bothAI && !sameTeam && (currentTime - player1.lastCollisionTime) > 500;
+            const canDamage2 = !bothAI && !sameTeam && (currentTime - player2.lastCollisionTime) > 500;
 
-        if (canDamage1 || canDamage2) {
+            if (canDamage1 || canDamage2) {
           // Base damage from score progression (AI use fixed 500-score baseline)
           const effectiveScore1 = player1.isAI ? AI_CONFIG.BASE_SCORE : player1.score;
           const effectiveScore2 = player2.isAI ? AI_CONFIG.BASE_SCORE : player2.score;
