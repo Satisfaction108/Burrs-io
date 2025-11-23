@@ -2796,10 +2796,43 @@ function App() {
 
   // Touch / mobile controls
   const [isTouchDevice, setIsTouchDevice] = useState(false)
-  const [joystickActive, setJoystickActive] = useState(false)
-  const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null)
-  const [joystickVector, setJoystickVector] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [isPortrait, setIsPortrait] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const touchCursorRef = useRef<{ x: number; y: number } | null>(null)
+
+  // Fullscreen functions
+  const enterFullscreen = () => {
+    const elem = document.documentElement
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen()
+    } else if ((elem as any).webkitRequestFullscreen) {
+      (elem as any).webkitRequestFullscreen()
+    } else if ((elem as any).mozRequestFullScreen) {
+      (elem as any).mozRequestFullScreen()
+    } else if ((elem as any).msRequestFullscreen) {
+      (elem as any).msRequestFullscreen()
+    }
+  }
+
+  const exitFullscreen = () => {
+    if (document.exitFullscreen) {
+      document.exitFullscreen()
+    } else if ((document as any).webkitExitFullscreen) {
+      (document as any).webkitExitFullscreen()
+    } else if ((document as any).mozCancelFullScreen) {
+      (document as any).mozCancelFullScreen()
+    } else if ((document as any).msExitFullscreen) {
+      (document as any).msExitFullscreen()
+    }
+  }
+
+  const toggleFullscreen = () => {
+    if (isFullscreen) {
+      exitFullscreen()
+    } else {
+      enterFullscreen()
+    }
+  }
 
   // Detect touch-capable devices for mobile/iPad controls
   useEffect(() => {
@@ -2838,33 +2871,41 @@ function App() {
 	    }
 	  }, [isTouchDevice])
 
-
-  // Map joystick vector into keyboard-like input flags
-  const applyJoystickToInput = () => {
-    if (!joystickActive) {
-      keysRef.current = { w: false, a: false, s: false, d: false }
-      return
-    }
-
-    const { x, y } = joystickVector
-    const deadZone = 0.2
-    const up = y < -deadZone
-    const down = y > deadZone
-    const left = x < -deadZone
-    const right = x > deadZone
-
-    keysRef.current = {
-      w: up,
-      a: left,
-      s: down,
-      d: right,
-    }
-  }
-
-  // Ensure joystick continually drives input when active
+  // Track fullscreen state
   useEffect(() => {
-    applyJoystickToInput()
-  }, [joystickActive, joystickVector])
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      )
+      setIsFullscreen(isCurrentlyFullscreen)
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange)
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange)
+    }
+  }, [])
+
+  // Auto-enter fullscreen on mobile when starting to play
+  useEffect(() => {
+    if (isTouchDevice && gameState === 'playing' && !isFullscreen) {
+      // Small delay to ensure user interaction has occurred
+      const timer = setTimeout(() => {
+        enterFullscreen()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [isTouchDevice, gameState, isFullscreen])
 
   // Score popups
   const scorePopupsRef = useRef<ScorePopup[]>([])
@@ -3413,10 +3454,54 @@ function App() {
       mousePositionRef.current = { x: worldX, y: worldY }
     }
 
+    // Handle touch events for mobile (convert touch to cursor position)
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isTouchDevice) return
+
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+      if (!localPlayer) return
+
+      const touch = e.touches[0]
+      if (!touch) return
+
+      // Get canvas bounding rect
+      const rect = canvas.getBoundingClientRect()
+
+      // Convert screen coordinates to canvas coordinates (CSS pixels)
+      const canvasX = touch.clientX - rect.left
+      const canvasY = touch.clientY - rect.top
+
+      // Store screen position for cursor indicator
+      touchCursorRef.current = { x: touch.clientX, y: touch.clientY }
+
+      // Convert canvas coordinates to world coordinates
+      const displayWidth = rect.width
+      const displayHeight = rect.height
+
+      const cameraX = localPlayer.x - displayWidth / 2
+      const cameraY = localPlayer.y - displayHeight / 2
+
+      const worldX = canvasX + cameraX
+      const worldY = canvasY + cameraY
+
+      mousePositionRef.current = { x: worldX, y: worldY }
+    }
+
+    const handleTouchEnd = () => {
+      touchCursorRef.current = null
+    }
+
     window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('touchmove', handleTouchMove, { passive: true })
+    window.addEventListener('touchend', handleTouchEnd)
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('touchend', handleTouchEnd)
     }
   }, [gameState])
 
@@ -5863,44 +5948,15 @@ function App() {
         </div>
       )}
 
-      {gameState === 'playing' && isTouchDevice && (
+      {/* Touch cursor indicator for mobile */}
+      {gameState === 'playing' && isTouchDevice && touchCursorRef.current && (
         <div
-          className={`joystick-container ${joystickActive ? 'active' : ''}`}
-          onTouchStart={(e: React.TouchEvent<HTMLDivElement>) => {
-            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-            const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-            setJoystickCenter(center)
-            setJoystickActive(true)
-            hapticManager.trigger('light')
+          className="touch-cursor-indicator"
+          style={{
+            left: `${touchCursorRef.current.x}px`,
+            top: `${touchCursorRef.current.y}px`,
           }}
-          onTouchMove={(e: React.TouchEvent<HTMLDivElement>) => {
-            if (!joystickCenter) return
-            const touch = e.touches[0]
-            const dx = touch.clientX - joystickCenter.x
-            const dy = touch.clientY - joystickCenter.y
-            const maxDist = 70
-            const dist = Math.min(Math.sqrt(dx * dx + dy * dy), maxDist)
-            const angle = Math.atan2(dy, dx)
-            const normX = (dist / maxDist) * Math.cos(angle)
-            const normY = (dist / maxDist) * Math.sin(angle)
-            setJoystickVector({ x: normX, y: normY })
-          }}
-          onTouchEnd={() => {
-            setJoystickActive(false)
-            setJoystickVector({ x: 0, y: 0 })
-            hapticManager.trigger('light')
-          }}
-        >
-          <div className="joystick-base" />
-          <div
-            className="joystick-thumb"
-            style={{
-              transform: joystickActive && joystickCenter
-                ? `translate(${joystickVector.x * 40}px, ${joystickVector.y * 40}px)`
-                : 'translate(0, 0)',
-            }}
-          />
-        </div>
+        />
       )}
 
 
@@ -5927,6 +5983,29 @@ function App() {
           </svg>
           <span className="speed-boost-label">Boost</span>
           <span className="speed-boost-key">B</span>
+        </button>
+      )}
+
+      {/* Fullscreen button for mobile */}
+      {gameState === 'playing' && isTouchDevice && (
+        <button
+          className="fullscreen-button"
+          onClick={toggleFullscreen}
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        >
+          <svg className="fullscreen-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {isFullscreen ? (
+              // Exit fullscreen icon
+              <>
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+              </>
+            ) : (
+              // Enter fullscreen icon
+              <>
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+              </>
+            )}
+          </svg>
         </button>
       )}
 

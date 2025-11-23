@@ -2529,6 +2529,51 @@
     font-size: 16px;
     padding: 10px 16px;
   }
+
+  /* Menu adjustments for mobile */
+  .title {
+    font-size: 48px !important;
+    margin-bottom: 20px !important;
+  }
+
+  .input-container {
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .name-input {
+    width: 100%;
+    font-size: 15px;
+    padding: 14px 18px;
+  }
+
+  .play-button {
+    width: 100%;
+    font-size: 16px;
+    padding: 14px;
+  }
+
+  .menu-buttons {
+    gap: 10px;
+    margin-top: 16px;
+    flex-direction: column;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .menu-secondary-button {
+    width: 100%;
+    padding: 12px 20px;
+    font-size: 14px;
+    justify-content: center;
+  }
+
+  .menu-secondary-button svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
 }
 
 /* Bottom-left UI buttons */
@@ -2734,5 +2779,333 @@
 
   .bug-modal-title {
     font-size: 24px;
+  }
+}
+
+/* ===========================
+   MOBILE & TOUCH DEVICE STYLES
+   =========================== */
+
+/* Touch cursor indicator */
+.touch-cursor-indicator {
+  position: fixed;
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(0, 255, 255, 0.8);
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  box-shadow:
+    0 0 20px rgba(0, 255, 255, 0.6),
+    inset 0 0 10px rgba(0, 255, 255, 0.3);
+  animation: pulse-cursor 1s ease-in-out infinite;
+}
+
+@keyframes pulse-cursor {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+    opacity: 1;
+  }
+}
+
+/* Fullscreen button for mobile */
+.fullscreen-button {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 15, 30, 0.9);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.fullscreen-button:hover {
+  background: rgba(25, 25, 40, 0.95);
+  border-color: rgba(0, 255, 255, 0.4);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+}
+
+.fullscreen-button:active {
+  transform: scale(0.95);
+}
+
+.fullscreen-icon {
+  width: 24px;
+  height: 24px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Mobile-specific UI adjustments */
+@media (max-width: 768px), (max-height: 500px) {
+  /* Reduce chat size on mobile */
+  .chat-panel {
+    width: 220px;
+    max-height: 180px;
+    left: 12px;
+    bottom: 70px;
+    font-size: 11px;
+  }
+
+  .chat-header {
+    padding: 8px 10px;
+  }
+
+  .chat-title {
+    font-size: 11px;
+  }
+
+  .chat-log {
+    padding: 6px;
+    gap: 4px;
+  }
+
+  .chat-message {
+    font-size: 10px;
+  }
+
+  .chat-input-row {
+    padding: 6px;
+    gap: 6px;
+  }
+
+  .chat-input {
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+
+  .chat-send-button {
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+
+  .chat-toggle-button {
+    left: 12px;
+    bottom: 70px;
+    padding: 8px 12px;
+    font-size: 11px;
+  }
+
+  /* Reduce progress info containers */
+  .progress-info-container {
+    width: 220px;
+    left: 12px;
+    padding: 8px 10px;
+  }
+
+  .spike-name-container {
+    bottom: 310px;
+  }
+
+  .progress-container {
+    bottom: 270px;
+  }
+
+  .progress-label {
+    font-size: 9px;
+  }
+
+  .progress-value {
+    font-size: 12px;
+  }
+
+  .progress-text {
+    font-size: 9px;
+  }
+
+  /* Reduce boost button size */
+  .speed-boost-button {
+    width: 56px;
+    height: 56px;
+    bottom: 16px;
+    right: 16px;
+  }
+
+  .speed-boost-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .speed-boost-label {
+    font-size: 9px;
+  }
+
+  .speed-boost-key {
+    display: none; /* Hide keyboard shortcut on mobile */
+  }
+
+  /* Reduce ability button size */
+  .ability-button {
+    width: 56px;
+    height: 56px;
+    bottom: 80px;
+    right: 16px;
+  }
+
+  .ability-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .ability-label {
+    font-size: 9px;
+  }
+
+  .ability-key {
+    display: none; /* Hide keyboard shortcut on mobile */
+  }
+
+  /* Reduce status bars */
+  .status-bars-container {
+    top: 12px;
+    left: 12px;
+    gap: 6px;
+  }
+
+  .status-bar {
+    height: 20px;
+    min-width: 140px;
+  }
+
+  .status-label {
+    font-size: 9px;
+  }
+
+  .status-value {
+    font-size: 10px;
+  }
+
+  /* Reduce leaderboard */
+  .leaderboard {
+    top: 12px;
+    right: 12px;
+    width: 160px;
+    padding: 8px;
+  }
+
+  .leaderboard-title {
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+
+  .leaderboard-entry {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
+  .leaderboard-rank {
+    font-size: 10px;
+    min-width: 18px;
+  }
+
+  .leaderboard-name {
+    font-size: 10px;
+  }
+
+  .leaderboard-score {
+    font-size: 10px;
+  }
+
+  /* Adjust fullscreen button position */
+  .fullscreen-button {
+    top: 12px;
+    right: 180px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .fullscreen-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Reduce minimap size */
+  .minimap-container {
+    width: 140px;
+    height: 140px;
+    bottom: 12px;
+    right: 12px;
+  }
+
+  /* Make server selector more visible on mobile */
+  .server-selector-container {
+    padding: 16px;
+    max-width: 90%;
+  }
+
+  .server-selector-title {
+    font-size: 20px;
+  }
+
+  .server-card {
+    padding: 14px;
+  }
+
+  .server-name {
+    font-size: 15px;
+  }
+
+  .server-location {
+    font-size: 11px;
+  }
+
+  .server-players {
+    font-size: 12px;
+  }
+
+  .server-ping {
+    font-size: 11px;
+  }
+}
+
+/* Extra small devices (phones in landscape) */
+@media (max-height: 450px) {
+  .chat-panel {
+    max-height: 120px;
+    width: 180px;
+  }
+
+  .progress-info-container {
+    width: 180px;
+  }
+
+  .spike-name-container {
+    bottom: 240px;
+  }
+
+  .progress-container {
+    bottom: 210px;
+  }
+
+  .status-bars-container {
+    gap: 4px;
+  }
+
+  .status-bar {
+    height: 18px;
+    min-width: 120px;
+  }
+
+  .leaderboard {
+    width: 140px;
+    padding: 6px;
+  }
+
+  .minimap-container {
+    width: 120px;
+    height: 120px;
   }
 }
