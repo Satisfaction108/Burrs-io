@@ -3224,14 +3224,18 @@ function App() {
       // Get canvas bounding rect
       const rect = canvas.getBoundingClientRect()
 
-      // Convert screen coordinates to canvas coordinates
+      // Convert screen coordinates to canvas coordinates (CSS pixels)
       const canvasX = e.clientX - rect.left
       const canvasY = e.clientY - rect.top
 
       // Convert canvas coordinates to world coordinates
       // Account for camera offset (camera is centered on player)
-      const cameraX = localPlayer.x - canvas.width / 2
-      const cameraY = localPlayer.y - canvas.height / 2
+      // Note: Use rect.width/height (CSS pixels) not canvas.width/height (physical pixels)
+      const displayWidth = rect.width
+      const displayHeight = rect.height
+
+      const cameraX = localPlayer.x - displayWidth / 2
+      const cameraY = localPlayer.y - displayHeight / 2
 
       const worldX = canvasX + cameraX
       const worldY = canvasY + cameraY
