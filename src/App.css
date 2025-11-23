@@ -1997,25 +1997,50 @@
 
 /* Auth modals */
 .auth-modal {
-  background: rgba(10, 10, 25, 0.98);
-  border-radius: 16px;
-  border: 2px solid rgba(0, 255, 255, 0.3);
+  background: linear-gradient(135deg, rgba(10, 10, 25, 0.98), rgba(15, 15, 35, 0.98));
+  border-radius: 20px;
+  border: 2px solid rgba(0, 255, 255, 0.4);
   box-shadow:
-    0 20px 60px rgba(0, 0, 0, 0.9),
-    0 0 40px rgba(0, 255, 255, 0.2);
-  padding: 32px;
-  max-width: 400px;
+    0 25px 70px rgba(0, 0, 0, 0.95),
+    0 0 50px rgba(0, 255, 255, 0.3),
+    inset 0 0 30px rgba(0, 255, 255, 0.05);
+  padding: 40px;
+  max-width: 420px;
   width: 90%;
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(25px);
+  position: relative;
+  overflow: hidden;
+}
+
+.auth-modal::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(0, 255, 255, 0.05) 0%, transparent 70%);
+  animation: rotate-gradient 20s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes rotate-gradient {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .auth-modal-title {
   color: #00ffff;
-  font-size: 28px;
-  font-weight: 700;
-  margin-bottom: 24px;
+  font-size: 32px;
+  font-weight: 800;
+  margin-bottom: 32px;
   text-align: center;
-  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+  text-shadow:
+    0 0 25px rgba(0, 255, 255, 0.6),
+    0 0 50px rgba(0, 255, 255, 0.3);
+  letter-spacing: 1px;
+  position: relative;
+  z-index: 1;
 }
 
 .auth-input-group {
@@ -2032,19 +2057,25 @@
 
 .auth-input {
   width: 100%;
-  padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
   color: white;
   font-size: 16px;
   transition: all 0.3s ease;
+  position: relative;
+  z-index: 1;
 }
 
 .auth-input:focus {
   outline: none;
-  border-color: #00ffff;
-  box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+  border-color: rgba(0, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 25px rgba(0, 255, 255, 0.3),
+    inset 0 0 15px rgba(0, 255, 255, 0.1);
+  transform: translateY(-2px);
 }
 
 .auth-submit-button {
@@ -2786,20 +2817,124 @@
    MOBILE & TOUCH DEVICE STYLES
    =========================== */
 
-/* Touch cursor indicator */
+/* Press P to start notification */
+.press-p-notification {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 20px 40px;
+  background: rgba(15, 15, 30, 0.95);
+  border: 2px solid rgba(0, 255, 255, 0.6);
+  border-radius: 16px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #00ffff;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.8);
+  box-shadow:
+    0 0 30px rgba(0, 255, 255, 0.4),
+    inset 0 0 20px rgba(0, 255, 255, 0.1);
+  z-index: 1000;
+  animation: pulse-notification 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes pulse-notification {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.05);
+    opacity: 1;
+  }
+}
+
+/* Mobile joystick for cursor control */
+.mobile-joystick {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  width: 120px;
+  height: 120px;
+  z-index: 100;
+  pointer-events: auto;
+}
+
+.joystick-base {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, rgba(15, 15, 30, 0.8), rgba(15, 15, 30, 0.95));
+  border: 2px solid rgba(0, 255, 255, 0.3);
+  box-shadow:
+    0 0 20px rgba(0, 255, 255, 0.2),
+    inset 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.joystick-stick {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(0, 255, 255, 0.9), rgba(0, 200, 200, 0.7));
+  border: 2px solid rgba(0, 255, 255, 0.6);
+  box-shadow:
+    0 0 15px rgba(0, 255, 255, 0.6),
+    inset 0 0 10px rgba(255, 255, 255, 0.3);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transition: all 0.05s ease-out;
+  pointer-events: none;
+}
+
+.joystick-stick.active {
+  background: radial-gradient(circle at 30% 30%, rgba(0, 255, 255, 1), rgba(0, 220, 220, 0.9));
+  box-shadow:
+    0 0 25px rgba(0, 255, 255, 0.8),
+    inset 0 0 15px rgba(255, 255, 255, 0.5);
+}
+
+/* Touch cursor indicator (crosshair at cursor position) */
 .touch-cursor-indicator {
   position: fixed;
-  width: 40px;
-  height: 40px;
-  border: 3px solid rgba(0, 255, 255, 0.8);
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(0, 255, 255, 0.8);
   border-radius: 50%;
   pointer-events: none;
   transform: translate(-50%, -50%);
   z-index: 9999;
   box-shadow:
-    0 0 20px rgba(0, 255, 255, 0.6),
-    inset 0 0 10px rgba(0, 255, 255, 0.3);
+    0 0 15px rgba(0, 255, 255, 0.6),
+    inset 0 0 8px rgba(0, 255, 255, 0.3);
   animation: pulse-cursor 1s ease-in-out infinite;
+}
+
+.touch-cursor-indicator::before,
+.touch-cursor-indicator::after {
+  content: '';
+  position: absolute;
+  background: rgba(0, 255, 255, 0.8);
+  box-shadow: 0 0 5px rgba(0, 255, 255, 0.6);
+}
+
+.touch-cursor-indicator::before {
+  width: 2px;
+  height: 12px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.touch-cursor-indicator::after {
+  width: 12px;
+  height: 2px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 @keyframes pulse-cursor {
@@ -2808,7 +2943,7 @@
     opacity: 0.8;
   }
   50% {
-    transform: translate(-50%, -50%) scale(1.1);
+    transform: translate(-50%, -50%) scale(1.15);
     opacity: 1;
   }
 }
@@ -2851,6 +2986,21 @@
 
 /* Mobile-specific UI adjustments */
 @media (max-width: 768px), (max-height: 500px) {
+  /* Make menu scrollable and compact in landscape */
+  .menu-buttons {
+    gap: 8px;
+    margin-top: 12px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .menu-secondary-button {
+    padding: 10px 16px;
+    font-size: 13px;
+    min-height: 40px;
+  }
+
   /* Reduce chat size on mobile */
   .chat-panel {
     width: 220px;
@@ -2968,76 +3118,109 @@
     display: none; /* Hide keyboard shortcut on mobile */
   }
 
-  /* Reduce status bars */
+  /* Reduce status bars - much smaller */
   .status-bars-container {
-    top: 12px;
-    left: 12px;
-    gap: 6px;
+    top: 8px;
+    left: 8px;
+    gap: 4px;
   }
 
   .status-bar {
-    height: 20px;
-    min-width: 140px;
+    height: 16px;
+    min-width: 100px;
   }
 
   .status-label {
-    font-size: 9px;
+    font-size: 8px;
   }
 
   .status-value {
-    font-size: 10px;
+    font-size: 9px;
   }
 
-  /* Reduce leaderboard */
+  /* Reduce leaderboard - much smaller */
   .leaderboard {
-    top: 12px;
-    right: 12px;
-    width: 160px;
-    padding: 8px;
+    top: 8px;
+    right: 8px;
+    width: 120px;
+    padding: 6px;
   }
 
   .leaderboard-title {
-    font-size: 11px;
-    margin-bottom: 6px;
+    font-size: 9px;
+    margin-bottom: 4px;
   }
 
   .leaderboard-entry {
-    padding: 4px 6px;
-    font-size: 10px;
+    padding: 3px 4px;
+    font-size: 8px;
   }
 
   .leaderboard-rank {
-    font-size: 10px;
-    min-width: 18px;
+    font-size: 8px;
+    min-width: 14px;
   }
 
   .leaderboard-name {
-    font-size: 10px;
+    font-size: 8px;
   }
 
   .leaderboard-score {
-    font-size: 10px;
+    font-size: 8px;
   }
 
   /* Adjust fullscreen button position */
   .fullscreen-button {
-    top: 12px;
-    right: 180px;
-    width: 40px;
-    height: 40px;
+    top: 8px;
+    right: 130px;
+    width: 32px;
+    height: 32px;
   }
 
   .fullscreen-icon {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
   }
 
-  /* Reduce minimap size */
+  /* Reduce minimap size - much smaller */
   .minimap-container {
-    width: 140px;
-    height: 140px;
-    bottom: 12px;
-    right: 12px;
+    width: 100px;
+    height: 100px;
+    bottom: 8px;
+    right: 8px;
+  }
+
+  /* Reduce settings button */
+  .settings-button {
+    top: 8px;
+    right: 170px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .settings-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Reduce audio settings button */
+  .audio-settings-button {
+    top: 8px;
+    right: 210px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .audio-settings-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Reduce notifications */
+  .notification {
+    padding: 8px 12px;
+    font-size: 11px;
+    max-width: 250px;
   }
 
   /* Make server selector more visible on mobile */
@@ -3074,38 +3257,74 @@
 /* Extra small devices (phones in landscape) */
 @media (max-height: 450px) {
   .chat-panel {
-    max-height: 120px;
-    width: 180px;
+    max-height: 100px;
+    width: 160px;
+    font-size: 9px;
   }
 
   .progress-info-container {
-    width: 180px;
+    width: 160px;
+    padding: 6px 8px;
   }
 
   .spike-name-container {
-    bottom: 240px;
+    bottom: 200px;
   }
 
   .progress-container {
-    bottom: 210px;
+    bottom: 170px;
   }
 
   .status-bars-container {
-    gap: 4px;
+    gap: 3px;
   }
 
   .status-bar {
-    height: 18px;
-    min-width: 120px;
+    height: 14px;
+    min-width: 90px;
+  }
+
+  .status-label {
+    font-size: 7px;
+  }
+
+  .status-value {
+    font-size: 8px;
   }
 
   .leaderboard {
-    width: 140px;
-    padding: 6px;
+    width: 100px;
+    padding: 4px;
+  }
+
+  .leaderboard-title {
+    font-size: 8px;
+  }
+
+  .leaderboard-entry {
+    padding: 2px 3px;
+    font-size: 7px;
   }
 
   .minimap-container {
-    width: 120px;
-    height: 120px;
+    width: 80px;
+    height: 80px;
+  }
+
+  .speed-boost-button,
+  .ability-button {
+    width: 48px;
+    height: 48px;
+  }
+
+  .fullscreen-button {
+    width: 28px;
+    height: 28px;
+  }
+
+  .settings-button,
+  .audio-settings-button {
+    width: 28px;
+    height: 28px;
   }
 }

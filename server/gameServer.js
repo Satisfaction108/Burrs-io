@@ -2121,8 +2121,8 @@ function gameLoop() {
             // Smooth interpolation toward target position (higher = more responsive)
             // Slower interpolation for spawning segments
             // Segments further back move slightly slower for more fluid snake-like motion
-            const segmentDepthFactor = 1 - (i * 0.015); // Each segment 1.5% slower than previous (reduced from 2%)
-            const baseInterpolationSpeed = 0.85 * segmentDepthFactor; // Increased from 0.7 for much more fluid movement
+            const segmentDepthFactor = 1 - (i * 0.01); // Each segment 1% slower than previous (reduced from 1.5%)
+            const baseInterpolationSpeed = 0.92 * segmentDepthFactor; // Increased from 0.85 for even smoother movement
             const interpolationSpeed = currentSegment.isSpawning
               ? baseInterpolationSpeed * 0.3 // Much slower during spawn
               : baseInterpolationSpeed;
@@ -2338,7 +2338,48 @@ function gameLoop() {
     }
 
     if (!player.isAI) {
-      // Check collision with food (segment-based)
+      // Get outer radius multiplier for this spike type
+      let outerRadiusMultiplier = 1.29; // Default (Spike)
+      switch (player.spikeType) {
+        case 'Prickle':
+        case 'PrickleVanguard':
+        case 'PrickleSwarm':
+        case 'PrickleBastion':
+          outerRadiusMultiplier = 1.48;
+          break;
+        case 'Thorn':
+        case 'ThornWraith':
+        case 'ThornReaper':
+        case 'ThornShadow':
+          outerRadiusMultiplier = 1.58;
+          break;
+        case 'Bristle':
+        case 'BristleBlitz':
+        case 'BristleStrider':
+        case 'BristleSkirmisher':
+          outerRadiusMultiplier = 1.38;
+          break;
+        case 'Bulwark':
+        case 'BulwarkAegis':
+        case 'BulwarkCitadel':
+        case 'BulwarkJuggernaut':
+          outerRadiusMultiplier = 1.28;
+          break;
+        case 'Starflare':
+        case 'StarflarePulsar':
+        case 'StarflareHorizon':
+        case 'StarflareNova':
+          outerRadiusMultiplier = 1.42;
+          break;
+        case 'Mauler':
+        case 'MaulerRavager':
+        case 'MaulerBulwark':
+        case 'MaulerApex':
+          outerRadiusMultiplier = 1.52;
+          break;
+      }
+
+      // Check collision with food (segment-based with outer radius)
       food.forEach((foodOrb) => {
         if (!player.segments || player.segments.length === 0) return;
 
@@ -2349,7 +2390,10 @@ function gameLoop() {
           const dy = foodOrb.y - segment.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          if (distance < segment.size + foodOrb.size) {
+          // Use outer radius for collision (segment size * multiplier)
+          const collisionRadius = segment.size * outerRadiusMultiplier;
+
+          if (distance < collisionRadius + foodOrb.size) {
             // Player collected food
             player.score += foodOrb.xp;
             player.foodEaten += 1; // Track food eaten
@@ -2379,7 +2423,7 @@ function gameLoop() {
         }
       });
 
-      // Check collision with premium orbs (segment-based)
+      // Check collision with premium orbs (segment-based with outer radius)
       premiumOrbs.forEach((orb) => {
         if (!player.segments || player.segments.length === 0) return;
 
@@ -2390,7 +2434,10 @@ function gameLoop() {
           const dy = orb.y - segment.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          if (distance < segment.size + orb.size) {
+          // Use outer radius for collision (segment size * multiplier)
+          const collisionRadius = segment.size * outerRadiusMultiplier;
+
+          if (distance < collisionRadius + orb.size) {
             // Player collected premium orb
             player.score += orb.xp;
             player.premiumOrbsEaten += 1; // Track premium orbs eaten

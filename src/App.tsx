@@ -2800,9 +2800,17 @@ function App() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const touchCursorRef = useRef<{ x: number; y: number } | null>(null)
 
+  // Joystick state
+  const [joystickActive, setJoystickActive] = useState(false)
+  const joystickBaseRef = useRef<{ x: number; y: number } | null>(null)
+  const joystickVectorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+
   // Local player score state for UI updates
   const [localPlayerScore, setLocalPlayerScore] = useState(0)
   const [localPlayerSpikeType, setLocalPlayerSpikeType] = useState('Spike')
+
+  // Movement start state (Press P to start)
+  const [hasStartedMoving, setHasStartedMoving] = useState(false)
 
   // Fullscreen functions
   const enterFullscreen = () => {
@@ -3374,6 +3382,14 @@ function App() {
 
       const key = e.key.toLowerCase()
 
+      // Press P to start moving
+      if (key === 'p' && !hasStartedMoving) {
+        setHasStartedMoving(true)
+        audioManager.playSFX('uiClick')
+        e.preventDefault()
+        return
+      }
+
       // Press chat key to open/focus chat while playing
       if (key === keybindings.chat.toLowerCase()) {
         setIsChatOpen(true)
@@ -3508,30 +3524,71 @@ function App() {
       mousePositionRef.current = { x: worldX, y: worldY }
     }
 
-    // Handle touch events for mobile (convert touch to cursor position)
-    const handleTouchMove = (e: TouchEvent) => {
-      if (!isTouchDevice) return
+    // Joystick-based cursor control for mobile
+    const updateCursorFromJoystick = () => {
+      if (!isTouchDevice || !joystickActive) return
 
+      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+      if (!localPlayer) return
+
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+
+      // Get joystick vector (normalized direction)
+      const joyX = joystickVectorRef.current.x
+      const joyY = joystickVectorRef.current.y
+
+      // Calculate cursor position based on joystick direction
+      // Place cursor 200 pixels away from player in joystick direction
+      const cursorDistance = 200
+      const cursorOffsetX = joyX * cursorDistance
+      const cursorOffsetY = joyY * cursorDistance
+
+      // Calculate world position of cursor
+      const worldX = localPlayer.x + cursorOffsetX
+      const worldY = localPlayer.y + cursorOffsetY
+
+      mousePositionRef.current = { x: worldX, y: worldY }
+
+      // Calculate screen position for cursor indicator
+      const cameraX = localPlayer.x - rect.width / 2
+      const cameraY = localPlayer.y - rect.height / 2
+
+      const screenX = (worldX - cameraX) + rect.left
+      const screenY = (worldY - cameraY) + rect.top
+
+      touchCursorRef.current = { x: screenX, y: screenY }
+    }
+
+    // Update cursor position continuously when joystick is active
+    const joystickInterval = setInterval(() => {
+      if (joystickActive) {
+        updateCursorFromJoystick()
+      }
+    }, 16) // ~60 FPS
+
+    return () => {
+      clearInterval(joystickInterval)
+    }
+  }, [gameState, isTouchDevice, joystickActive])
+
+  // Mouse movement handler
+  useEffect(() => {
+    if (gameState !== 'playing' || isTouchDevice) return
+
+    const handleMouseMove = (e: MouseEvent) => {
       const canvas = canvasRef.current
       if (!canvas) return
 
       const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
       if (!localPlayer) return
 
-      const touch = e.touches[0]
-      if (!touch) return
-
-      // Get canvas bounding rect
       const rect = canvas.getBoundingClientRect()
+      const canvasX = e.clientX - rect.left
+      const canvasY = e.clientY - rect.top
 
-      // Convert screen coordinates to canvas coordinates (CSS pixels)
-      const canvasX = touch.clientX - rect.left
-      const canvasY = touch.clientY - rect.top
-
-      // Store screen position for cursor indicator
-      touchCursorRef.current = { x: touch.clientX, y: touch.clientY }
-
-      // Convert canvas coordinates to world coordinates
       const displayWidth = rect.width
       const displayHeight = rect.height
 
@@ -3544,20 +3601,12 @@ function App() {
       mousePositionRef.current = { x: worldX, y: worldY }
     }
 
-    const handleTouchEnd = () => {
-      touchCursorRef.current = null
-    }
-
     window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('touchmove', handleTouchMove, { passive: true })
-    window.addEventListener('touchend', handleTouchEnd)
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('touchmove', handleTouchMove)
-      window.removeEventListener('touchend', handleTouchEnd)
     }
-  }, [gameState])
+  }, [gameState, isTouchDevice])
 
   // Socket.IO connection - connect once when leaving menu
   useEffect(() => {
@@ -3611,6 +3660,11 @@ function App() {
     }) => {
       localPlayerIdRef.current = data.playerId
       mapConfigRef.current = data.mapConfig
+
+      // Reset movement state on spawn (unless reconnecting)
+      if (!data.reconnected) {
+        setHasStartedMoving(false)
+      }
 
       // Successful init means we are now fully in the game.
       // If we were in the "connecting" state, advance to "playing".
@@ -4353,9 +4407,10 @@ function App() {
     if (gameState !== 'playing' || !socketRef.current) return
 
     const sendInput = () => {
-      // Don't send input if player is dying or evolution tree is open
       const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
-      if (localPlayer?.isDying || showEvolutionTree) {
+
+      // Don't send input if player hasn't started moving yet, is dying, or evolution tree is open
+      if (!hasStartedMoving || localPlayer?.isDying || showEvolutionTree) {
         // Send current position as target (no movement)
         socketRef.current?.emit('input', {
           mouseX: localPlayer?.x || 0,
@@ -4378,7 +4433,7 @@ function App() {
     return () => {
       clearInterval(inputInterval)
     }
-  }, [gameState, showEvolutionTree])
+  }, [gameState, showEvolutionTree, hasStartedMoving])
 
   // Rendering loop for playing state
   useEffect(() => {
@@ -6000,8 +6055,15 @@ function App() {
         </div>
       )}
 
+      {/* Press P to start notification */}
+      {gameState === 'playing' && !hasStartedMoving && (
+        <div className="press-p-notification">
+          Press P to start playing
+        </div>
+      )}
+
       {/* Touch cursor indicator for mobile */}
-      {gameState === 'playing' && isTouchDevice && touchCursorRef.current && (
+      {gameState === 'playing' && isTouchDevice && touchCursorRef.current && joystickActive && (
         <div
           className="touch-cursor-indicator"
           style={{
@@ -6009,6 +6071,77 @@ function App() {
             top: `${touchCursorRef.current.y}px`,
           }}
         />
+      )}
+
+      {/* Mobile joystick for cursor control */}
+      {gameState === 'playing' && isTouchDevice && (
+        <div
+          className="mobile-joystick"
+          onTouchStart={(e) => {
+            e.preventDefault()
+
+            // Start playing on first touch
+            if (!hasStartedMoving) {
+              setHasStartedMoving(true)
+            }
+
+            const rect = e.currentTarget.getBoundingClientRect()
+            const centerX = rect.left + rect.width / 2
+            const centerY = rect.top + rect.height / 2
+
+            joystickBaseRef.current = { x: centerX, y: centerY }
+            setJoystickActive(true)
+          }}
+          onTouchMove={(e) => {
+            e.preventDefault()
+            if (!joystickActive || !joystickBaseRef.current) return
+
+            const touch = e.touches[0]
+            const dx = touch.clientX - joystickBaseRef.current.x
+            const dy = touch.clientY - joystickBaseRef.current.y
+
+            // Limit joystick movement to base radius (60px)
+            const maxRadius = 35
+            const distance = Math.sqrt(dx * dx + dy * dy)
+            const clampedDistance = Math.min(distance, maxRadius)
+
+            // Normalize direction
+            const angle = Math.atan2(dy, dx)
+            const normalizedX = Math.cos(angle)
+            const normalizedY = Math.sin(angle)
+
+            // Update joystick vector (normalized direction)
+            joystickVectorRef.current = {
+              x: normalizedX,
+              y: normalizedY
+            }
+
+            // Update stick visual position
+            const stickX = normalizedX * clampedDistance
+            const stickY = normalizedY * clampedDistance
+
+            const stick = e.currentTarget.querySelector('.joystick-stick') as HTMLElement
+            if (stick) {
+              stick.style.transform = `translate(calc(-50% + ${stickX}px), calc(-50% + ${stickY}px))`
+            }
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault()
+            setJoystickActive(false)
+            joystickBaseRef.current = null
+            joystickVectorRef.current = { x: 0, y: 0 }
+            touchCursorRef.current = null
+
+            // Reset stick position
+            const stick = e.currentTarget.querySelector('.joystick-stick') as HTMLElement
+            if (stick) {
+              stick.style.transform = 'translate(-50%, -50%)'
+            }
+          }}
+        >
+          <div className="joystick-base" />
+          <div className={`joystick-stick ${joystickActive ? 'active' : ''}`} />
+        </div>
       )}
 
 
