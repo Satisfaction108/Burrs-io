@@ -734,8 +734,8 @@ const drawSpikeChain = (
     drawSpikeEffects(ctx, segment.x, segment.y, segment.size, spikeEffectId)
 
     // Draw the spike segment
-    // Only show username on head (index 0)
-    const showUsername = index === 0 ? player.username : undefined
+    // Only show username on head (index 0), but show health bar on all segments
+    const showUsername = index === 0 ? player.username : ''
 
     // Calculate health percentage for display
     // segment.health is the raw HP value, need to convert to percentage
@@ -755,7 +755,7 @@ const drawSpikeChain = (
       healthPercentage, // Convert raw HP to percentage for health bar
       index === 0 ? (player.angryProgress || 0) : 0, // Only head shows angry animation
       player.deathProgress || 0,
-      skipUsername,
+      index === 0 ? skipUsername : true, // Skip username for non-head segments
       player.isAI ?? false,
       player.spikeType || 'Spike',
       spawnOpacity, // Apply spawn fade-in
@@ -1195,7 +1195,8 @@ const drawSpike = (
   }
 
   // Draw health bar below spike (visible to all players, only for player spikes, scaled with size)
-  if (username && (!deathProgress || deathProgress < 1)) {
+  // Show health bar if username is defined (even if empty string for non-head segments)
+  if (username !== undefined && (!deathProgress || deathProgress < 1)) {
     ctx.save()
 
     // Fade health bar out as the spike dies
