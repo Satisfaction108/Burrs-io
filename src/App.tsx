@@ -2609,6 +2609,7 @@ function App() {
   const playersRef = useRef<Map<string, Player>>(new Map())
   const localPlayerIdRef = useRef<string | null>(null)
   const keysRef = useRef({ w: false, a: false, s: false, d: false })
+  const mousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 }) // Mouse position in world coordinates
   const backgroundSpikesRef = useRef<Player[]>([])
   const mapConfigRef = useRef<MapConfig>({ width: 8000, height: 8000 })
   const animationFrameRef = useRef<number | null>(null)
@@ -3208,6 +3209,42 @@ function App() {
       window.removeEventListener('keyup', handleKeyUp)
     }
   }, [gameState, keybindings])
+
+  // Mouse tracking for cursor-based movement
+  useEffect(() => {
+    if (gameState !== 'playing') return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
+      if (!localPlayer) return
+
+      // Get canvas bounding rect
+      const rect = canvas.getBoundingClientRect()
+
+      // Convert screen coordinates to canvas coordinates
+      const canvasX = e.clientX - rect.left
+      const canvasY = e.clientY - rect.top
+
+      // Convert canvas coordinates to world coordinates
+      // Account for camera offset (camera is centered on player)
+      const cameraX = localPlayer.x - canvas.width / 2
+      const cameraY = localPlayer.y - canvas.height / 2
+
+      const worldX = canvasX + cameraX
+      const worldY = canvasY + cameraY
+
+      mousePositionRef.current = { x: worldX, y: worldY }
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+    }
+  }, [gameState])
 
   // Socket.IO connection - connect once when leaving menu
   useEffect(() => {
@@ -3998,7 +4035,7 @@ function App() {
 
   }, [gameState, displayName])
 
-  // Send input to server
+  // Send input to server (mouse position for cursor-based movement)
   useEffect(() => {
     if (gameState !== 'playing' || !socketRef.current) return
 
@@ -4006,16 +4043,18 @@ function App() {
       // Don't send input if player is dying or evolution tree is open
       const localPlayer = localPlayerIdRef.current ? playersRef.current.get(localPlayerIdRef.current) : null
       if (localPlayer?.isDying || showEvolutionTree) {
-        // Send zero input to stop movement
-        socketRef.current?.emit('input', { up: false, down: false, left: false, right: false })
+        // Send current position as target (no movement)
+        socketRef.current?.emit('input', {
+          mouseX: localPlayer?.x || 0,
+          mouseY: localPlayer?.y || 0
+        })
         return
       }
 
+      // Send mouse position in world coordinates
       const input = {
-        up: keysRef.current.w,
-        down: keysRef.current.s,
-        left: keysRef.current.a,
-        right: keysRef.current.d,
+        mouseX: mousePositionRef.current.x,
+        mouseY: mousePositionRef.current.y,
       }
 
       socketRef.current?.emit('input', input)
@@ -5520,7 +5559,12 @@ function App() {
     // Speed abilities (Bristle line) can only be used while moving
     const speedAbilitySpikes: SpikeType[] = ['Bristle', 'BristleBlitz', 'BristleStrider', 'BristleSkirmisher']
     if (speedAbilitySpikes.includes(currentSpikeType)) {
-      const isMoving = keysRef.current.w || keysRef.current.a || keysRef.current.s || keysRef.current.d
+      // Check if player has velocity (is actually moving)
+      const vx = localPlayer.vx || 0
+      const vy = localPlayer.vy || 0
+      const speed = Math.sqrt(vx * vx + vy * vy)
+      const isMoving = speed > 0.5 // Small threshold to account for deceleration
+
       if (!isMoving) {
         notificationsRef.current.push({
           id: Math.random().toString(36).substring(2, 11),

@@ -1010,7 +1010,7 @@ io.on('connection', (socket) => {
     console.log(`Player joined: ${playerName} (${socket.id})`);
   });
 
-  // Handle player input
+  // Handle player input (mouse position for cursor-based movement)
   socket.on('input', (inputs) => {
     const player = players.get(socket.id);
     if (player && inputs) {
@@ -1019,13 +1019,11 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Validate inputs (security check)
-      player.inputs = {
-        up: Boolean(inputs.up),
-        down: Boolean(inputs.down),
-        left: Boolean(inputs.left),
-        right: Boolean(inputs.right),
-      };
+      // Store mouse target position (in world coordinates)
+      if (typeof inputs.mouseX === 'number' && typeof inputs.mouseY === 'number') {
+        player.mouseX = inputs.mouseX;
+        player.mouseY = inputs.mouseY;
+      }
     }
   });
 
@@ -1046,16 +1044,35 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Calculate direction toward mouse cursor
+    let dirX = 0;
+    let dirY = 0;
+
+    if (player.mouseX !== undefined && player.mouseY !== undefined) {
+      const dx = player.mouseX - player.x;
+      const dy = player.mouseY - player.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance > 5) {
+        dirX = dx / distance;
+        dirY = dy / distance;
+      }
+    }
+
+    // If no mouse direction, use current velocity direction
     const vx = player.vx || 0;
     const vy = player.vy || 0;
     const speed = Math.sqrt(vx * vx + vy * vy);
 
-    const minSpeedRatio = GAME_CONFIG.BOOST_MIN_SPEED_RATIO || 0.2;
-    const minSpeed = (GAME_CONFIG.PLAYER_SPEED || 1) * minSpeedRatio;
+    if (dirX === 0 && dirY === 0 && speed > 0) {
+      dirX = vx / speed;
+      dirY = vy / speed;
+    }
 
-    if (speed < minSpeed) {
+    // Must have a direction to boost
+    if (dirX === 0 && dirY === 0) {
       socket.emit('speedBoostError', {
-        message: 'You must be moving to use speed boost.'
+        message: 'Move your cursor to use speed boost.'
       });
       return;
     }
@@ -1065,13 +1082,8 @@ io.on('connection', (socket) => {
     const speedMultiplier = 1 / Math.sqrt(sizeMultiplier);
     const adjustedSpeed = GAME_CONFIG.PLAYER_SPEED * speedMultiplier;
 
-    const dirX = vx / speed;
-    const dirY = vy / speed;
-
     const boostMul = GAME_CONFIG.BOOST_SPEED_MULTIPLIER || 2.2;
-    const maxFactor = GAME_CONFIG.BOOST_MAX_SPEED_FACTOR || 3.0;
-
-    const targetSpeed = Math.min(speed * boostMul, adjustedSpeed * maxFactor);
+    const targetSpeed = adjustedSpeed * boostMul;
 
     player.vx = dirX * targetSpeed;
     player.vy = dirY * targetSpeed;
@@ -1880,22 +1892,20 @@ function gameLoop() {
         targetVy = 0;
       }
     } else {
-      // Human player controlled via inputs
-      if (player.inputs.up) targetVy -= 1;
-      if (player.inputs.down) targetVy += 1;
-      if (player.inputs.left) targetVx -= 1;
-      if (player.inputs.right) targetVx += 1;
+      // Human player controlled via mouse cursor
+      if (player.mouseX !== undefined && player.mouseY !== undefined) {
+        // Calculate direction from player to mouse cursor
+        const dx = player.mouseX - player.x;
+        const dy = player.mouseY - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
 
-      // Normalize diagonal movement
-      if (targetVx !== 0 && targetVy !== 0) {
-        const magnitude = Math.sqrt(targetVx * targetVx + targetVy * targetVy);
-        targetVx = targetVx / magnitude;
-        targetVy = targetVy / magnitude;
+        // Only move if cursor is far enough away (dead zone of 5 pixels)
+        if (distance > 5) {
+          // Normalize direction
+          targetVx = (dx / distance) * adjustedSpeed;
+          targetVy = (dy / distance) * adjustedSpeed;
+        }
       }
-
-      // Scale to adjusted speed
-      targetVx *= adjustedSpeed;
-      targetVy *= adjustedSpeed;
     }
 
     // Detect direction change (recoil effect)
@@ -1956,6 +1966,38 @@ function gameLoop() {
       player.segments[0].y = player.y;
       player.segments[0].rotation = player.rotation;
       player.segments[0].health = player.currentHP || player.health;
+
+      // Update following segments (Slither.io-style chain following)
+      if (player.segments.length > 1) {
+        // Calculate spacing between segments (thorns should touch)
+        // Spacing = segment diameter (so thorns of adjacent segments touch)
+        const segmentSpacing = actualSize * 2; // Diameter of spike
+
+        for (let i = 1; i < player.segments.length; i++) {
+          const currentSegment = player.segments[i];
+          const previousSegment = player.segments[i - 1];
+
+          // Calculate direction from current segment to previous segment
+          const dx = previousSegment.x - currentSegment.x;
+          const dy = previousSegment.y - currentSegment.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Only move if distance is greater than desired spacing
+          if (distance > segmentSpacing) {
+            // Calculate how much to move (smooth interpolation)
+            const moveDistance = distance - segmentSpacing;
+            const interpolationSpeed = 0.3; // Smooth following (0.0 = no follow, 1.0 = instant)
+            const actualMoveDistance = moveDistance * interpolationSpeed;
+
+            // Move toward previous segment
+            const moveX = (dx / distance) * actualMoveDistance;
+            const moveY = (dy / distance) * actualMoveDistance;
+
+            currentSegment.x += moveX;
+            currentSegment.y += moveY;
+          }
+        }
+      }
     }
 
     // BristleStrider: Trailing Surge - record damage trail positions
